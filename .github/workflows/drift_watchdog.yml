@@ -1,0 +1,45 @@
+name: Drift Watchdog
+
+# Roda 12:00 UTC — depois do ingest_15m + ingest_daily do dia já terem commitado.
+# Compara distribuição das features (baseline VAL 2023-2024 vs últimos 30d).
+# Alerta Telegram se max PSI > 0.25.
+
+on:
+  schedule:
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: drift-watchdog
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt scipy
+      - name: Pull latest
+        run: git pull --rebase origin main || true
+      - name: Run drift watchdog
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scripts/drift_watchdog.py
+      - name: Commit history
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/drift_history.parquet
+          if git diff --staged --quiet; then
+            echo "no drift history changes"
+          else
+            git commit -m "data(drift): $(date -u +%FT%TZ)"
+            git push
+          fi
