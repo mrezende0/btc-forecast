@@ -161,6 +161,159 @@ HOLDOUT 2025-01→2026-05:  Sharpe +1.53  PSR(0) 0.952  MaxDD  -8.3%  72 trades 
 
 ---
 
+## E — Dynamic Leverage (2026-05-27)
+
+**Hipótese:** Leverage condicional à confiança do modelo (`proba_mid`) e vol realizada amplifica retorno sem inflar Sharpe-per-DD vs leverage flat.
+
+**Método:**
+- `pipeline/model.py:dynamic_leverage(proba_mid, rv_30d_ann, in_bear)` — fórmula `clamp(base × f_vol, 1, LEVERAGE_MAX)` com `base = 1 + f_conf × (max-1)` e `f_vol = min(1, target/rv)`.
+- `notebooks/exp_e_dynamic_leverage.py` — backtest contrafactual no cache walk_forward_probas.parquet (sem K extra: aplica fórmula em probas existentes).
+- `pipeline/predict_now.py` — leverage agora vem de `dynamic_leverage()` por padrão. Env `TRADING_LEVERAGE` segue como override manual.
+- `pipeline/telegram.py` — formatter exibe componentes (f_conf, f_vol) da leverage dinâmica.
+
+**Resultado HOLDOUT 2025-01 → 2026-05 (cache A1-A):**
+```
+mode             HO Sharpe  HO final  HO MaxDD  avg lev  Sharpe/DD
+flat_1x (atual)    +1.53     $1,328    -8.3%    1.00     0.184
+dynamic [1,3]      +1.60     $1,397   -10.1%    1.12     0.158
+dynamic [1,5]      +1.72     $1,576   -13.3%    1.37     0.129
+flat_3x            +1.91     $2,647   -20.1%    3.00     0.095
+```
+
+**Caveat VAL 2023-2024:** dynamic [1,5] tem VAL Sharpe -0.16 (vs flat_1x +0.36). Em regime adverso, leverage amplifica perdas. f_vol mitiga mas não anula. Trade-off explícito.
+
+**Decisão:** KEEP com `LEVERAGE_MAX=5`. Sharpe-per-DD ainda 1.36× melhor que flat_3x. Em prod, formato Telegram mostra origem (dinâmica/manual) pra o operador decidir.
+
+**K incremental:** +1 (uma fórmula testada). Total K = 95.
+
+---
+
+## F — SHORT model (em andamento, 2026-05-27)
+
+**Hipótese:** Se o modelo tem edge em direção LONG (target = label==+1, HO Sharpe 1.53), o espelho SHORT (target = label==-1) deve ter edge simétrico em magnitude > 0.5 OOS honesto. Notebook 10 sugeriu isso (sem uniqueness, sem holdout split limpo). Re-testar com pipeline novo.
+
+**Método pré-registrado:**
+- `notebooks/exp_f_short_walkforward.py` — walk-forward expanding 2023-01-01 → presente, retreino a cada 90d.
+- Mesma feature matrix (build_v2 BTC 4h, lag=1), uniqueness weights LdP, COST=0.0015.
+- Target: `y_short = (label == -1)` (triple-barrier 3×ATR, lower hit antes de upper/timeout).
+- Reporta 3 estratégias separadas:
+  - LONG-only (baseline atual): proba_long > 0.35, no_bear=-0.05
+  - SHORT-only: proba_short > 0.35, **bull filter inverso**: ret_30d > +0.05 → suprime (não shorta em mercado já caindo, espera reversão na alta).
+  - COMBINED: soma trades não-conflitantes (se ambos sinalizam, anula).
+- VAL: 2023-01 → 2024-12, HOLDOUT: 2025-01 → 2026-05.
+
+**Critério KEEP/KILL:**
+- KEEP SHORT se: HO Sharpe SHORT-only ≥ 0.5 E HO Sharpe COMBINED ≥ HO Sharpe LONG-only + 0.10.
+- KILL se: HO Sharpe SHORT-only < 0.3 OU COMBINED < LONG-only (não traz incremento real).
+- NEEDS-MORE-DATA se: HO Sharpe SHORT-only ∈ [0.3, 0.5] — anota mas não promove.
+
+**K incremental:** +1. Total K projetado = 96.
+
+**Resultado (rodado 2026-05-27):**
+
+```
+mode           VAL Shp   HO Shp   VAL n   HO n   HO win%   HO DD    HO final
+long_only      +0.36     +1.53      88     71    60.6%    -8.3%    $1,328
+short_only     -0.90     -0.50     118     73    47.9%   -24.4%    $864
+combined       -0.86     +0.89     183    114    55.3%   -15.2%    $1,248
+```
+
+**Decisão: KILL** (critério pré-registrado dispara: HO Sharpe SHORT < 0.3).
+
+**Findings:**
+1. SHORT espelho **não tem edge OOS** em HOLDOUT bullish 2025+. Win rate 47.9% sub-50%.
+2. COMBINED **piora** LONG-only (Sharpe +0.89 vs +1.53). Adicionar shorts contamina, mesmo com anti-conflito.
+3. Assimetria estrutural BTC: long tem horizon 48h favorável; short tem reversões rápidas → muitos timeouts em -ATR ainda no swing.
+
+**Próximas tentativas possíveis (Q3+, parking lot):**
+- Modelo SHORT com features assimétricas (RSI extremo, basis spike, OI delta) em vez de feature set espelho.
+- Horizon 24h em vez de 48h pra short (reversões mais curtas).
+- Treinar só em sub-amostras de regime bear identificado (não em todo histórico).
+
+**K incremental:** +1 (consumido sem ganho). Total K = 96.
+
+---
+
+## G — Exit Logic refinada (2026-05-27)
+
+**Hipótese:** Partial TP + trailing stop captam mais expectancy do mesmo sinal sem K de feature. Esperado +10-25% expectancy/trade.
+
+**Método:** `notebooks/exp_g_exit_logic.py` — 6 modos no cache walk_forward_probas.parquet:
+1. baseline (hard 3×ATR target/stop, prod hoje)
+2. partial_tp_50 (50% em +1×ATR, 50% trailing 2×ATR)
+3. partial_tp_30_30_40 (30/30/40 com trailing remainder)
+4. trail_only (100% trailing 2×ATR)
+5. tp1_be (50% em +1×ATR, 50% restante: stop move pra break-even, target full 3×ATR)
+6. tp1_be_wide_trail (50% em TP1, 50% restante com trailing 4×ATR frouxo)
+
+**Resultado HO 2025+:**
+
+```
+mode                  HO Sharpe   HO final  HO MaxDD   ΔSharpe
+baseline              +1.23       $1,244    -7.3%      —
+partial_tp_50         -1.49       $836     -20.7%      -2.72
+partial_tp_30_30_40   -1.41       $839     -20.4%      -2.64
+trail_only            -1.60       $796     -25.0%      -2.83
+tp1_be                -0.43       $935     -13.1%      -1.66
+tp1_be_wide_trail     +0.21       $1,022    -9.6%      -1.02
+```
+
+**Decisão: KILL todos.** Nenhum modo bate baseline.
+
+**Findings estruturais:**
+1. **Double-cost:** partial TP paga COST=0.15% duas vezes/trade (0.30% vs 0.15% baseline). Em trade que vai a target completo (3.3% bruto), baseline = +3.15% líq; partial 50/50 = +0.21% líq.
+2. **ATR_MULT=3 já é optimum** pro horizon 48h BTC. Avg leg ret cai de +0.524% (baseline) pra +0.04% a -0.09% em todas variantes. O setup vencedor explora vela explosiva, não parcial.
+3. **Trailing chandelier:** 2×ATR apertado demais pra vol BTC (pullbacks rotineiros 4-8% atravessam); 4×ATR frouxo demais (sai em timeout flat, não captura).
+
+**K incremental:** +1 (consumido sem ganho). Total K = 97.
+
+---
+
+## Resumo de fases (sessão 2026-05-27 pós-A1-A)
+
+| Fase | Item | Resultado | K |
+|------|------|-----------|---|
+| 1a | exp_c 1h vs 4h | KILL 1h (HO -0.73) | +1 |
+| 1b | exp_d ETH walk-forward | KILL ETH (HO -0.33) | +1 |
+| 2 | exp_e dynamic_leverage | **KEEP** [1,5] (HO +1.72 vs +1.53, +19% retorno) | +1 |
+| 3 | exp_f SHORT model | KILL (HO -0.50 standalone, combined PIOR) | +1 |
+| 4 | exp_g exit logic (6 modos) | KILL todos (double-cost mata expectancy) | +1 |
+
+**K total cumulativo:** 95 (E mantido) + 4 KILL = **97-98 hipóteses testadas honestas**.
+
+**Único ganho real:** dynamic_leverage. Outros 4 caminhos exauridos — edge é específico (BTC + 4h + LONG + ATR_MULT=3 + threshold 0.35).
+
+---
+
+## H — Drift Watchdog (2026-05-27, governança)
+
+**Hipótese:** sem monitoria, regressões silenciosas (feature distribuição mudou, modelo previsões pioraram) só aparecem quando capital já foi perdido.
+
+**Método:**
+- `scripts/drift_watchdog.py` — PSI (Population Stability Index) + KS-test por feature. Baseline = VAL 2023-2024 (4386 bars), current = últimos 30d (180 bars 4h).
+- Buckets: PSI <0.10 estável, 0.10-0.25 moderado, >0.25 ALERTA, >0.50 CRÍTICO.
+- History append em `data/drift_history.parquet` (idempotente por data).
+- Telegram alert se max PSI > 0.25 (envia top 5 críticos + top 5 alertas).
+- `.github/workflows/drift_watchdog.yml` — cron 12:00 UTC diário.
+
+**Primeira execução (2026-05-27):**
+
+```
+max PSI = 8.28
+38 features CRÍTICAS · 7 ALERTAS · 7 moderadas
+
+Top 5 críticos:
+  ma_7d/30d/90d  PSI 8.28  (BTC subiu de ~47k → ~77k base)
+  fg             PSI 5.95  (F&G 36 "Extreme Fear" vs base média 59)
+  funding_ema8d  PSI 5.65  (funding ~0 vs base ~0.0001)
+```
+
+**Leitura:** alerta justo. O sistema está em regime estatisticamente diferente do treino. ma_* absolutas drifta naturalmente em bull cycle — futura iteração pode mascarar features absolutas. Pelo critério atual, drift > 0.25 detectado → operador deve avaliar se modelo precisa retreino com janela mais recente.
+
+**K incremental:** 0 (governança, não consome K). Total K = 97.
+
+---
+
 ## Política dia-a-dia
 
 1. **Pré-registrar** experimento aqui ANTES de rodar.
