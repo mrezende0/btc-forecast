@@ -39,18 +39,27 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Run backfill chunk
         run: |
+          mkdir -p data/news_chunks
           python -m pipeline.news_backfill \
             --start "${{ github.event.inputs.start_date }}" \
-            --end   "${{ github.event.inputs.end_date }}"
-      - name: Pull rebase + commit
+            --end   "${{ github.event.inputs.end_date }}" \
+            --output "data/news_chunks/${{ github.event.inputs.start_date }}_${{ github.event.inputs.end_date }}.parquet"
+      - name: Pull rebase + commit chunk
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git pull --rebase origin main || true
-          git add data/news_raw.parquet
-          if git diff --staged --quiet; then
-            echo "nothing to commit"
-          else
-            git commit -m "data(news): chunk ${{ github.event.inputs.start_date }} → ${{ github.event.inputs.end_date }}"
-            git push
-          fi
+          # retry loop: pull + commit + push (chunks paralelos podem conflitar no rebase mas arquivos são únicos)
+          for attempt in 1 2 3 4 5; do
+            git pull --rebase --autostash origin main || true
+            git add data/news_chunks/
+            if git diff --staged --quiet; then
+              echo "nothing to commit"
+              break
+            fi
+            git commit -m "data(news-chunk): ${{ github.event.inputs.start_date }} → ${{ github.event.inputs.end_date }}"
+            if git push; then
+              break
+            fi
+            echo "push falhou, tentando novamente (attempt $attempt)"
+            sleep $((attempt * 5))
+          done

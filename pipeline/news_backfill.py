@@ -23,6 +23,7 @@ def run(
     end: str | None = None,
     chunk: str = "day",
     query: str | None = None,
+    output: str | None = None,
 ) -> None:
     start_dt = datetime.fromisoformat(start).replace(tzinfo=timezone.utc)
     end_dt = (
@@ -31,7 +32,9 @@ def run(
         else datetime.now(tz=timezone.utc)
     )
 
-    print(f"[gdelt] {start_dt.date()} → {end_dt.date()}  (chunk={chunk})", flush=True)
+    out_path = Path(output) if output else NEWS
+
+    print(f"[gdelt] {start_dt.date()} → {end_dt.date()}  (chunk={chunk})  out={out_path}", flush=True)
 
     def _normalize(df: pl.DataFrame) -> pl.DataFrame:
         df = df.with_columns(
@@ -49,8 +52,8 @@ def run(
     def _flush(batch: pl.DataFrame) -> None:
         if batch.is_empty():
             return
-        n = storage.upsert(NEWS, _normalize(batch), "id")
-        print(f"[gdelt]  💾 flush: +{n} novos no Parquet", flush=True)
+        n = storage.upsert(out_path, _normalize(batch), "id")
+        print(f"[gdelt]  💾 flush: +{n} novos em {out_path.name}", flush=True)
 
     df = gdelt.fetch_range(
         start_dt,
@@ -64,8 +67,8 @@ def run(
         print("[gdelt] nenhum artigo retornado no total", flush=True)
         return
 
-    total = storage.read(NEWS).height
-    print(f"[gdelt] ✓ concluído. Parquet total = {total} artigos", flush=True)
+    total = storage.read(out_path).height
+    print(f"[gdelt] ✓ concluído. {out_path.name} total = {total} artigos", flush=True)
 
 
 if __name__ == "__main__":
@@ -74,4 +77,5 @@ if __name__ == "__main__":
     p.add_argument("--end", default=None)
     p.add_argument("--chunk", default="day", choices=["day", "hour"])
     p.add_argument("--query", default=None)
+    p.add_argument("--output", default=None, help="Parquet de destino (default data/news_raw.parquet)")
     run(**vars(p.parse_args()))
