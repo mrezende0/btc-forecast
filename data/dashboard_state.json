@@ -1,0 +1,68 @@
+{
+  "generated_at": "2026-05-27T15:36:36.754384+00:00",
+  "price": {
+    "available": true,
+    "last_close": 75440.56,
+    "last_dt": "2026-05-27T13:00:00+00:00",
+    "ret_24h": -0.021354777923515478,
+    "ret_7d": -0.026147060254896215,
+    "ret_30d": -0.02929664932263576,
+    "ret_90d": 0.10888268111260802,
+    "high_30d": 82850.0,
+    "low_30d": 74289.6,
+    "n_bars": 189295
+  },
+  "vol": {
+    "available": true,
+    "rv_1d_ann": 0.42855257997921326,
+    "rv_1w_ann": 0.3221650995902548,
+    "rv_30d_ann": 0.30970836870117596
+  },
+  "funding": {
+    "available": true,
+    "last": 8.948e-05,
+    "last_dt": "2026-05-27T08:00:00.004000+00:00",
+    "mean_30d": 1.4369e-05,
+    "z_30d": 1.7188162341596491,
+    "q05_30d": -5.7759e-05,
+    "q95_30d": 7.739099999999998e-05
+  },
+  "macro": {
+    "available": true,
+    "last_date": "2026-05-26",
+    "dxy": {
+      "last": 99.1500015258789,
+      "z_30d": 0.2318212177479566,
+      "chg_5d": 0.001818736010464228
+    },
+    "vix": {
+      "last": 17.010000228881836,
+      "z_30d": -1.0293040565346834,
+      "chg_5d": -0.058139494358271704
+    },
+    "spx": {
+      "last": 7519.1201171875,
+      "z_30d": 1.629848653586555,
+      "chg_5d": 0.015678715605358384
+    }
+  },
+  "fg": {
+    "available": true,
+    "last": 25,
+    "last_class": "Extreme Fear",
+    "last_date": "2026-05-27",
+    "chg_7d": -2,
+    "chg_30d": -22
+  },
+  "sentiment_news": {
+    "available": false,
+    "reason": "GDELT backfill pendente ou sentiment_agg n\u00e3o rodou"
+  },
+  "data_health": {
+    "ohlcv_15m_rows": 189295,
+    "funding_rows": 5918,
+    "macro_days": 1357,
+    "fg_days": 3034,
+    "news_days": 0
+  }
+}

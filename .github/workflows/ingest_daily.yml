@@ -25,6 +25,7 @@ jobs:
       - run: python -m pipeline.ingest_daily
         env:
           COINDESK_API_KEY: ${{ secrets.COINDESK_API_KEY }}
+      - run: python -m pipeline.dashboard_state
       - name: Commit data
         run: |
           git config user.name  "github-actions[bot]"
