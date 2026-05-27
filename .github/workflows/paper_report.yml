@@ -1,0 +1,34 @@
+name: Paper Trade Report
+
+# Resumo semanal do paper trade. Domingos 12:00 UTC.
+# Também roda diário (silent) pra atualizar dashboard JSON (futuro).
+
+on:
+  schedule:
+    # Domingo 12:00 UTC — resumo semanal sonoro
+    - cron: '0 12 * * 0'
+  workflow_dispatch:
+    inputs:
+      send_now:
+        description: 'Envia relatório imediato'
+        required: false
+        default: 'true'
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Send paper trade report
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m pipeline.paper_report --send-telegram
