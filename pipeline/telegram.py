@@ -71,6 +71,12 @@ def format_signal(pred: dict, state: dict | None = None, is_test: bool = False, 
             f"🎯 Modelos: mid 48h *{pred['proba_mid']*100:.1f}%*  +  long 72h *{pred['proba_long_horizon']*100:.1f}%*  "
             f"(both > 35% pra confirmar)"
         )
+        # Indica filtro de regime
+        if pred.get("in_bear"):
+            ret_30d_pct = pred.get("ret_30d", 0) * 100
+            lines.append(f"🐻 Filtro BEAR ATIVO: BTC {ret_30d_pct:+.1f}% nos últimos 30d (sinal suprimido)")
+        elif "ret_30d" in pred:
+            lines.append(f"📈 BTC {pred['ret_30d']*100:+.1f}% nos últimos 30d (fora de bear)")
     else:
         lines.append(f"🎯 Confiança modelo: *{proba_pct:.1f}%*  (threshold 35%, edge {edge_sign}{conf_pct:.0f}%)")
     if sub:
@@ -84,9 +90,20 @@ def format_signal(pred: dict, state: dict | None = None, is_test: bool = False, 
             f"  • Target: *${position['target_price']:,.0f}*  ({tgt_pct:+.2f}%)",
             f"  • Stop: *${position['stop_price']:,.0f}*  ({stop_pct:+.2f}%)",
             f"  • Timeout: {position['horizon_hours']}h",
-            "",
-            "_Saída automática: sistema te avisa quando bater target, stop ou timeout._",
         ])
+        # Sugestão de sizing risk-1pct
+        if "size_suggestion" in position:
+            sz = position["size_suggestion"]
+            cap_note = " (cap 50%)" if sz["capped"] else ""
+            lines.extend([
+                "",
+                f"💰 Sizing sugerido (1% risk on stop):",
+                f"  • Capital base: *${sz['capital']:,.0f}*",
+                f"  • Posição: *{sz['size_btc']:.5f} BTC* ≈ *${sz['size_usd']:,.0f}* ({sz['pct_of_capital']*100:.1f}% do capital){cap_note}",
+                f"  • Risco se stop: *${sz['risk_dollars']:,.2f}*",
+            ])
+        lines.append("")
+        lines.append("_Saída automática: sistema te avisa quando bater target, stop ou timeout._")
     else:
         lines.extend([
             "🎯 Estratégia (triple-barrier):",

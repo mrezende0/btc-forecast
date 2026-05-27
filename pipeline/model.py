@@ -17,6 +17,8 @@ HORIZON_BARS = 12          # mid horizon (48h)
 HORIZON_BARS_LONG = 18     # long horizon (72h) — segundo modelo do AND
 ATR_MULT = 3.0
 SIGNAL_THRESHOLD = 0.35
+RISK_PER_TRADE = 0.01      # 1% do capital arriscado no stop (validado em exp_position_sizing)
+NO_BEAR_THRESHOLD = -0.05  # se BTC caiu >5% no último mês → suprime sinal (validado em exp_regime_analysis)
 
 LGB_PARAMS = dict(
     objective="binary",
@@ -98,10 +100,23 @@ def predict_dual_horizon() -> dict:
         long_row = mat_long.tail(1)
     proba_long_h = float(m_long.predict(long_row.select(fc_long).to_numpy())[0])
 
-    # Sinal final: AMBOS concordam
+    # Filtro de regime: suprime sinal se BTC caiu mais que NO_BEAR_THRESHOLD no último mês.
+    # Mês = ~180 bars 4h (30 dias × 6 bars/dia). Compara close atual vs close ~30d atrás.
+    bars_per_month = 180
+    if mat_mid.height >= bars_per_month + 1:
+        close_now = float(mat_mid["close"][-1])
+        close_30d_ago = float(mat_mid["close"][-1 - bars_per_month])
+        ret_30d = close_now / close_30d_ago - 1
+    else:
+        ret_30d = 0.0  # warm-up insuficiente, deixa passar
+
+    in_bear = ret_30d < NO_BEAR_THRESHOLD
+
+    # Sinal final: AMBOS concordam E não está em bear
     signal_mid = proba_mid > SIGNAL_THRESHOLD
     signal_long_h = proba_long_h > SIGNAL_THRESHOLD
-    signal = signal_mid and signal_long_h
+    signal_ml = signal_mid and signal_long_h
+    signal = signal_ml and not in_bear
 
     return {
         "open_time": ot,
@@ -111,8 +126,44 @@ def predict_dual_horizon() -> dict:
         "proba_long": proba_mid,   # backward compat com format_signal
         "signal_mid": signal_mid,
         "signal_long_h": signal_long_h,
+        "signal_ml": signal_ml,
+        "in_bear": in_bear,
+        "ret_30d": ret_30d,
         "signal": signal,
         "confidence_pct": (min(proba_mid, proba_long_h) - SIGNAL_THRESHOLD) / (1 - SIGNAL_THRESHOLD) * 100,
         "_mat_mid": mat_mid,
         "_features_mid": fc_mid,
+    }
+
+
+def position_size(
+    capital: float,
+    entry_price: float,
+    stop_price: float,
+    risk_pct: float = RISK_PER_TRADE,
+    max_pct: float = 0.50,
+) -> dict:
+    """Calcula tamanho de posição risk-based (1% do capital no stop).
+
+    Retorna {size_btc, size_usd, risk_dollars, pct_of_capital, capped}.
+    Cap em max_pct (default 50%) pra evitar que ATR baixo gere posição enorme.
+    """
+    risk_dollars = capital * risk_pct
+    distance = entry_price - stop_price
+    if distance <= 0:
+        return {"size_btc": 0, "size_usd": 0, "risk_dollars": risk_dollars, "pct_of_capital": 0, "capped": False}
+    size_btc = risk_dollars / distance
+    size_usd = size_btc * entry_price
+    pct = size_usd / capital
+    capped = pct > max_pct
+    if capped:
+        size_usd = capital * max_pct
+        size_btc = size_usd / entry_price
+        pct = max_pct
+    return {
+        "size_btc": size_btc,
+        "size_usd": size_usd,
+        "risk_dollars": risk_dollars,
+        "pct_of_capital": pct,
+        "capped": capped,
     }

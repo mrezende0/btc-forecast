@@ -94,12 +94,40 @@ def run(quiet: bool = False, force_send: bool = False) -> None:
                     atr_mult=mdl.ATR_MULT,
                     horizon_hours=mdl.HORIZON_BARS * 4,  # bars 4h
                 )
+                # Sugestão de sizing risk-1pct (capital configurável via env)
+                user_capital = float(os.environ.get("TELEGRAM_USER_CAPITAL", "1000"))
+                sz = mdl.position_size(
+                    capital=user_capital,
+                    entry_price=new_pos["entry_price"],
+                    stop_price=new_pos["stop_price"],
+                )
+                sz["capital"] = user_capital
+                new_pos["size_suggestion"] = sz
+
                 print(
                     f"[predict] 📌 Posição aberta: entry=${new_pos['entry_price']:,.0f}  "
-                    f"target=${new_pos['target_price']:,.0f}  stop=${new_pos['stop_price']:,.0f}"
+                    f"target=${new_pos['target_price']:,.0f}  stop=${new_pos['stop_price']:,.0f}  "
+                    f"size_sugerido={sz['size_btc']:.5f} BTC (${sz['size_usd']:,.0f}, {sz['pct_of_capital']*100:.0f}% do capital)"
                 )
             else:
                 print("[predict] ⚠️ ATR inválido, não abriu posição")
+    elif is_test_mode:
+        # Em teste, mostra sizing como se fosse signal real (cosmético)
+        atr_now = float(mat["atr_14"][-1]) if "atr_14" in mat.columns else None
+        if atr_now and atr_now > 0:
+            entry = pred["close"]
+            stop = entry - mdl.ATR_MULT * atr_now
+            target = entry + mdl.ATR_MULT * atr_now
+            user_capital = float(os.environ.get("TELEGRAM_USER_CAPITAL", "1000"))
+            sz = mdl.position_size(capital=user_capital, entry_price=entry, stop_price=stop)
+            sz["capital"] = user_capital
+            new_pos = {
+                "entry_price": entry,
+                "target_price": target,
+                "stop_price": stop,
+                "horizon_hours": mdl.HORIZON_BARS * 4,
+                "size_suggestion": sz,
+            }
 
     msg = telegram.format_signal(pred, state=state, is_test=is_test_mode, position=new_pos)
     try:
