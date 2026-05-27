@@ -8,15 +8,24 @@ Endpoints:
 
 REFERÊNCIA: valores diferem de Binance (funding/OI/LS são por-exchange).
 Trends e z-scores são altamente correlacionados — features ML continuam válidas.
+
+Env vars opcionais (override pra CF Worker proxy):
+  BYBIT_BASE     default https://api.bybit.com
+  PROXY_TOKEN    se set, envia como header X-Proxy-Token
 """
 from __future__ import annotations
 
+import os
 import time
 
 import polars as pl
 import requests
 
-BASE = "https://api.bybit.com"
+_PROXY = (os.environ.get("PROXY_BASE") or "").rstrip("/")
+BASE = (os.environ.get("BYBIT_BASE")
+        or (f"{_PROXY}/bybit" if _PROXY else "https://api.bybit.com")).rstrip("/")
+_TOKEN = os.environ.get("PROXY_TOKEN", "")
+_HEADERS = {"X-Proxy-Token": _TOKEN} if _TOKEN else {}
 KLINE = BASE + "/v5/market/kline"
 FUNDING = BASE + "/v5/market/funding/history"
 OI = BASE + "/v5/market/open-interest"
@@ -34,7 +43,7 @@ def _get(url: str, params: dict, retries: int = 4) -> dict:
     last: Exception | None = None
     for attempt in range(retries):
         try:
-            r = requests.get(url, params=params, timeout=20)
+            r = requests.get(url, params=params, timeout=20, headers=_HEADERS)
             r.raise_for_status()
             body = r.json()
             if body.get("retCode") != 0:

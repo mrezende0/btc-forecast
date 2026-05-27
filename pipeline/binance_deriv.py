@@ -3,19 +3,30 @@
 LIMITAÇÃO: endpoints fapi `openInterestHist`, `topLongShortAccountRatio`,
 `takerlongshortRatio` retêm apenas ~30 dias. Backfill profundo NÃO é possível
 no plano free. Use cron incremental pra acumular histórico ao longo do tempo.
+
+Env vars opcionais (override pra CF Worker proxy):
+  BINANCE_FAPI_BASE  default https://fapi.binance.com
+  PROXY_TOKEN        se set, envia como header X-Proxy-Token
 """
 from __future__ import annotations
 
+import os
 import time
 
 import polars as pl
 import requests
 
-OI_HIST = "https://fapi.binance.com/futures/data/openInterestHist"
-TOP_LS_ACC = "https://fapi.binance.com/futures/data/topLongShortAccountRatio"
-TOP_LS_POS = "https://fapi.binance.com/futures/data/topLongShortPositionRatio"
-GLOBAL_LS_ACC = "https://fapi.binance.com/futures/data/globalLongShortAccountRatio"
-TAKER_RATIO = "https://fapi.binance.com/futures/data/takerlongshortRatio"
+_PROXY = (os.environ.get("PROXY_BASE") or "").rstrip("/")
+_FAPI = (os.environ.get("BINANCE_FAPI_BASE")
+         or (f"{_PROXY}/binance-fapi" if _PROXY else "https://fapi.binance.com")).rstrip("/")
+_TOKEN = os.environ.get("PROXY_TOKEN", "")
+_HEADERS = {"X-Proxy-Token": _TOKEN} if _TOKEN else {}
+
+OI_HIST = f"{_FAPI}/futures/data/openInterestHist"
+TOP_LS_ACC = f"{_FAPI}/futures/data/topLongShortAccountRatio"
+TOP_LS_POS = f"{_FAPI}/futures/data/topLongShortPositionRatio"
+GLOBAL_LS_ACC = f"{_FAPI}/futures/data/globalLongShortAccountRatio"
+TAKER_RATIO = f"{_FAPI}/futures/data/takerlongshortRatio"
 
 PERIOD = "15m"
 PERIOD_MS = 15 * 60 * 1000
@@ -27,7 +38,7 @@ def _get(url: str, params: dict, retries: int = 4) -> list:
     last: Exception | None = None
     for attempt in range(retries):
         try:
-            r = requests.get(url, params=params, timeout=20)
+            r = requests.get(url, params=params, timeout=20, headers=_HEADERS)
             if r.status_code == 451:
                 print(f"[deriv] WARN: 451 geo-block em {url}")
                 return []

@@ -2,17 +2,31 @@
 
 Filtra velas em formação (only close_time <= now - 1min) pra evitar gravar dados
 que vão mudar.
+
+Env vars opcionais (override pra usar CF Worker proxy contra geo-block):
+  BINANCE_SPOT_BASE  default https://data-api.binance.vision
+  BINANCE_FAPI_BASE  default https://fapi.binance.com
+  PROXY_TOKEN        se set, envia como header X-Proxy-Token
 """
 from __future__ import annotations
 
+import os
 import time
 
 import polars as pl
 import requests
 
-SPOT_KLINES = "https://data-api.binance.vision/api/v3/klines"
-FUNDING = "https://fapi.binance.com/fapi/v1/fundingRate"
-PERP_KLINES = "https://fapi.binance.com/fapi/v1/klines"  # perpetual futures
+_PROXY = (os.environ.get("PROXY_BASE") or "").rstrip("/")
+_SPOT = (os.environ.get("BINANCE_SPOT_BASE")
+         or (f"{_PROXY}/binance-spot" if _PROXY else "https://data-api.binance.vision")).rstrip("/")
+_FAPI = (os.environ.get("BINANCE_FAPI_BASE")
+         or (f"{_PROXY}/binance-fapi" if _PROXY else "https://fapi.binance.com")).rstrip("/")
+_TOKEN = os.environ.get("PROXY_TOKEN", "")
+_HEADERS = {"X-Proxy-Token": _TOKEN} if _TOKEN else {}
+
+SPOT_KLINES = f"{_SPOT}/api/v3/klines"
+FUNDING = f"{_FAPI}/fapi/v1/fundingRate"
+PERP_KLINES = f"{_FAPI}/fapi/v1/klines"  # perpetual futures
 
 SYMBOL = "BTCUSDT"  # default — pode ser override via parâmetro
 INTERVAL = "15m"
@@ -28,7 +42,7 @@ def _get_with_retries(url: str, params: dict, timeout: int = 30, retries: int = 
     last = None
     for attempt in range(retries):
         try:
-            r = requests.get(url, params=params, timeout=timeout)
+            r = requests.get(url, params=params, timeout=timeout, headers=_HEADERS)
             r.raise_for_status()
             return r
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
@@ -103,6 +117,7 @@ def fetch_funding(start_ms: int, end_ms: int | None = None, symbol: str = SYMBOL
                 "limit": 1000,
             },
             timeout=20,
+            headers=_HEADERS,
         )
         if r.status_code == 451:
             # fapi sem mirror público — runner geo-bloqueado. Skip funding.
@@ -151,6 +166,7 @@ def fetch_perp_klines(start_ms: int, end_ms: int | None = None, symbol: str = SY
                 "limit": 1500,  # fapi max é 1500
             },
             timeout=20,
+            headers=_HEADERS,
         )
         if r.status_code == 451:
             print("[perp] WARN: 451 geo-block, pulando coleta perp")

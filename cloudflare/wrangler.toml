@@ -1,0 +1,7 @@
+name = "btc-forecast-proxy"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+# PROXY_TOKEN é configurado como secret (não fica no repo):
+#   npx wrangler secret put PROXY_TOKEN
+# E inserido no GH Secrets como PROXY_TOKEN também (mesmo valor).

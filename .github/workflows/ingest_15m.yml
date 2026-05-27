@@ -22,8 +22,14 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: Ingest BTC (OHLCV + funding + perp + deriv)
+        env:
+          PROXY_BASE: ${{ secrets.PROXY_BASE }}
+          PROXY_TOKEN: ${{ secrets.PROXY_TOKEN }}
         run: python -m pipeline.ingest_15m --asset BTC
       - name: Ingest ETH (OHLCV + funding + perp + deriv)
+        env:
+          PROXY_BASE: ${{ secrets.PROXY_BASE }}
+          PROXY_TOKEN: ${{ secrets.PROXY_TOKEN }}
         run: python -m pipeline.ingest_15m --asset ETH
       - name: Commit data
         run: |
