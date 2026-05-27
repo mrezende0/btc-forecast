@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 
-from pipeline import assets, binance, binance_deriv, storage
+from pipeline import assets, binance, binance_deriv, bybit, storage
 
 DEFAULT_START_MS = int(datetime(2021, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
 
@@ -24,6 +24,55 @@ def _parse_start(s: str | None) -> int | None:
 
 
 DERIV_BACKFILL_MS = 29 * 24 * 60 * 60 * 1000  # 29 dias (30 retorna 400)
+BYBIT_DEFAULT_BACKFILL_MS = 7 * 24 * 60 * 60 * 1000  # 7 dias default pra Bybit deriv (OI/LS retem pouco)
+BYBIT_FUNDING_BACKFILL_MS = 60 * 24 * 60 * 60 * 1000  # 60 dias pra Bybit funding (retém ~66d)
+
+
+def _bybit_start(path, full_backfill: bool, start_override: int | None, default_back_ms: int) -> int:
+    """Start time pra Bybit: incremental se houver dado, senão último N dias."""
+    last = storage.last_ts(path, "open_time" if "oi" in str(path) or "long_short" in str(path) or "perp" in str(path) else "funding_time")
+    if last is not None and not full_backfill:
+        return last + 1
+    if start_override is not None:
+        return start_override
+    from time import time as _t
+    return int(_t() * 1000) - default_back_ms
+
+
+def _ingest_bybit(cfg: dict, symbol: str, full_backfill: bool, start_override: int | None) -> None:
+    """Coleta Bybit V5 — substitui Binance fapi quando geo-block. Parquets separados (bybit_*)."""
+    bf_path = cfg["bybit_funding"]
+    bp_path = cfg["bybit_perp"]
+    boi_path = cfg["bybit_oi"]
+    bls_path = cfg["bybit_long_short"]
+
+    try:
+        s = _bybit_start(bf_path, full_backfill, start_override, BYBIT_FUNDING_BACKFILL_MS)
+        f = bybit.fetch_funding(s, symbol=symbol)
+        print(f"[bybit-fund] +{storage.upsert(bf_path, f, 'funding_time')} pontos → {bf_path.name}")
+    except Exception as e:
+        print(f"[bybit-fund] ⚠️ falha: {e}")
+
+    try:
+        s = _bybit_start(bp_path, full_backfill, start_override, BYBIT_DEFAULT_BACKFILL_MS)
+        p = bybit.fetch_perp_klines(s, symbol=symbol)
+        print(f"[bybit-perp] +{storage.upsert(bp_path, p, 'open_time')} velas → {bp_path.name}")
+    except Exception as e:
+        print(f"[bybit-perp] ⚠️ falha: {e}")
+
+    try:
+        s = _bybit_start(boi_path, full_backfill, start_override, BYBIT_DEFAULT_BACKFILL_MS)
+        oi = bybit.fetch_open_interest(s, symbol=symbol)
+        print(f"[bybit-oi]   +{storage.upsert(boi_path, oi, 'open_time')} pontos → {boi_path.name}")
+    except Exception as e:
+        print(f"[bybit-oi]   ⚠️ falha: {e}")
+
+    try:
+        s = _bybit_start(bls_path, full_backfill, start_override, BYBIT_DEFAULT_BACKFILL_MS)
+        ls = bybit.fetch_long_short_ratio(s, symbol=symbol)
+        print(f"[bybit-ls]   +{storage.upsert(bls_path, ls, 'open_time')} pontos → {bls_path.name}")
+    except Exception as e:
+        print(f"[bybit-ls]   ⚠️ falha: {e}")
 
 
 def _deriv_start(path, full_backfill: bool, start_override: int | None) -> int:
@@ -81,6 +130,9 @@ def run(asset: str = "BTC", backfill: bool = False, start: str | None = None,
         print(f"[perp]    +{storage.upsert(perp_path, p, 'open_time')} velas → {perp_path.name}")
     except Exception as e:
         print(f"[perp]    ⚠️ falha: {e}")
+
+    # ---- Bybit fallback (sem geo-block US, valores Bybit-specific) ----
+    _ingest_bybit(cfg, symbol, full_backfill, start_override)
 
     if skip_deriv:
         return

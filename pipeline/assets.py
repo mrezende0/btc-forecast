@@ -13,7 +13,7 @@ DATA = Path("data")
 def _paths_for(symbol: str, legacy: bool = False) -> dict:
     """Retorna paths dos parquets desse ativo."""
     if legacy:
-        return {
+        binance = {
             "ohlcv": DATA / "ohlcv_15m.parquet",
             "funding": DATA / "funding.parquet",
             "perp": DATA / "perp_15m.parquet",
@@ -21,6 +21,13 @@ def _paths_for(symbol: str, legacy: bool = False) -> dict:
             "long_short": DATA / "long_short_15m.parquet",
             "taker_ratio": DATA / "taker_ratio_15m.parquet",
         }
+        bybit = {
+            "bybit_funding": DATA / "bybit_funding.parquet",
+            "bybit_perp": DATA / "bybit_perp_15m.parquet",
+            "bybit_oi": DATA / "bybit_oi_15m.parquet",
+            "bybit_long_short": DATA / "bybit_long_short_15m.parquet",
+        }
+        return {**binance, **bybit}
     base = symbol.replace("USDT", "").lower()
     return {
         "ohlcv": DATA / f"{base}_ohlcv_15m.parquet",
@@ -29,6 +36,10 @@ def _paths_for(symbol: str, legacy: bool = False) -> dict:
         "oi": DATA / f"{base}_oi_15m.parquet",
         "long_short": DATA / f"{base}_long_short_15m.parquet",
         "taker_ratio": DATA / f"{base}_taker_ratio_15m.parquet",
+        "bybit_funding": DATA / f"{base}_bybit_funding.parquet",
+        "bybit_perp": DATA / f"{base}_bybit_perp_15m.parquet",
+        "bybit_oi": DATA / f"{base}_bybit_oi_15m.parquet",
+        "bybit_long_short": DATA / f"{base}_bybit_long_short_15m.parquet",
     }
 
 
