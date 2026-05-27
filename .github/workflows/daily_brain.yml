@@ -1,0 +1,41 @@
+name: Daily Brain
+
+# Roda 07:00 UTC — logo após ingest_daily (06:00 UTC) já ter feito commit.
+# Gera reports/daily_YYYY-MM-DD.md com snapshot do sistema.
+
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  brain:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: daily-brain
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Pull latest
+        run: git pull --rebase origin main || true
+      - name: Generate brain report
+        run: python -m pipeline.daily_brain
+      - name: Commit report
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add reports/
+          if git diff --staged --quiet; then
+            echo "no report changes"
+          else
+            git commit -m "report(daily-brain): $(date -u +%F)"
+            git push
+          fi
