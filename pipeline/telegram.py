@@ -64,8 +64,15 @@ def format_signal(pred: dict, state: dict | None = None, is_test: bool = False, 
         "",
         f"📊 Vela: `{ts:%Y-%m-%d %H:%M} UTC` (4h)",
         f"💵 Preço: *${price:,.0f}*",
-        f"🎯 Confiança modelo: *{proba_pct:.1f}%*  (threshold 35%, edge {edge_sign}{conf_pct:.0f}%)",
     ]
+    # Se houver pred dual-horizon, mostrar ambos
+    if "proba_mid" in pred and "proba_long_horizon" in pred:
+        lines.append(
+            f"🎯 Modelos: mid 48h *{pred['proba_mid']*100:.1f}%*  +  long 72h *{pred['proba_long_horizon']*100:.1f}%*  "
+            f"(both > 35% pra confirmar)"
+        )
+    else:
+        lines.append(f"🎯 Confiança modelo: *{proba_pct:.1f}%*  (threshold 35%, edge {edge_sign}{conf_pct:.0f}%)")
     if sub:
         lines.append(sub)
     lines.append("")

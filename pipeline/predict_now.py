@@ -49,19 +49,15 @@ def _load_state() -> dict | None:
 
 
 def run(quiet: bool = False, force_send: bool = False) -> None:
-    print("[predict] build matriz…", flush=True)
-    mat, fcols = mdl.build_training_matrix()
-    print(f"[predict]   {mat.height} rows, {len(fcols)} features")
+    print("[predict] treina dual-horizon (mid 48h + long 72h)…", flush=True)
+    pred = mdl.predict_dual_horizon()
+    mat = pred["_mat_mid"]  # pra acessar ATR atual
 
-    print("[predict] treina…", flush=True)
-    model = mdl.train(mat, fcols)
-
-    print("[predict] prediz…", flush=True)
-    pred = mdl.predict_latest(model, mat, fcols)
     ts = datetime.fromtimestamp(pred["open_time"] / 1000, tz=timezone.utc)
     print(
         f"[predict]   bar={ts:%Y-%m-%d %H:%M}  close=${pred['close']:,.0f}  "
-        f"proba={pred['proba_long']*100:.1f}%  signal={pred['signal']}"
+        f"mid={pred['proba_mid']*100:.1f}%  long={pred['proba_long_horizon']*100:.1f}%  "
+        f"signal={pred['signal']}  (mid={pred['signal_mid']}, long={pred['signal_long_h']})"
     )
 
     n = _log_signal(pred)
