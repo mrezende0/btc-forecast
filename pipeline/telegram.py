@@ -1,0 +1,92 @@
+"""Sender Telegram — formata e envia alertas do modelo v2.
+
+Requer envs:
+  TELEGRAM_BOT_TOKEN — do BotFather
+  TELEGRAM_CHAT_ID   — seu chat ID (numérico)
+"""
+from __future__ import annotations
+
+import os
+from datetime import datetime, timezone
+
+import requests
+
+API = "https://api.telegram.org/bot{token}/sendMessage"
+
+
+def _creds() -> tuple[str, str]:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id:
+        raise RuntimeError(
+            "Faltam TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID. "
+            "Veja dashboard/SETUP_TELEGRAM.md"
+        )
+    return token, chat_id
+
+
+def send(text: str, silent: bool = False) -> None:
+    token, chat_id = _creds()
+    r = requests.post(
+        API.format(token=token),
+        json={
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "Markdown",
+            "disable_notification": silent,
+        },
+        timeout=15,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"Telegram falhou {r.status_code}: {r.text[:200]}")
+
+
+def format_signal(pred: dict, state: dict | None = None) -> str:
+    """Formata alerta legível em Markdown."""
+    ts = datetime.fromtimestamp(pred["open_time"] / 1000, tz=timezone.utc)
+    proba_pct = pred["proba_long"] * 100
+    conf_pct = pred["confidence_pct"]
+    price = pred["close"]
+
+    lines = [
+        "🟢 *SINAL DE COMPRA — BTC*",
+        "",
+        f"📊 Vela: `{ts:%Y-%m-%d %H:%M} UTC` (4h)",
+        f"💵 Preço: *${price:,.0f}*",
+        f"🎯 Confiança modelo: *{proba_pct:.1f}%*  (threshold 35%, edge +{conf_pct:.0f}%)",
+        "",
+        "🎯 Estratégia (triple-barrier):",
+        "  • Target +1.1% (barreira superior)",
+        "  • Stop −1.1% (barreira inferior)",
+        "  • Timeout: 48h",
+    ]
+
+    if state:
+        lines.append("")
+        lines.append("📈 *Contexto*:")
+        if state.get("vol", {}).get("available"):
+            rv1d = state["vol"]["rv_1d_ann"] * 100
+            lines.append(f"  • Vol 1d: {rv1d:.0f}% ann")
+        if state.get("funding", {}).get("available"):
+            z = state["funding"]["z_30d"]
+            lines.append(f"  • Funding z-30d: {z:+.2f}")
+        if state.get("fg", {}).get("available"):
+            fg = state["fg"]["last"]
+            cls = state["fg"]["last_class"]
+            lines.append(f"  • F&G: {fg} ({cls})")
+        if state.get("macro", {}).get("vix", {}).get("z_30d") is not None:
+            vix_z = state["macro"]["vix"]["z_30d"]
+            lines.append(f"  • VIX z: {vix_z:+.2f}")
+
+    lines.append("")
+    lines.append("_Uso pessoal. Não é recomendação de investimento._")
+    return "\n".join(lines)
+
+
+def format_no_signal(pred: dict) -> str:
+    """Resumo curto quando NÃO houve sinal (notificação silenciosa, opcional)."""
+    ts = datetime.fromtimestamp(pred["open_time"] / 1000, tz=timezone.utc)
+    return (
+        f"⚪ Sem sinal — {ts:%Y-%m-%d %H:%M} UTC\n"
+        f"BTC ${pred['close']:,.0f}  ·  proba_long {pred['proba_long']*100:.1f}% (<35%)"
+    )

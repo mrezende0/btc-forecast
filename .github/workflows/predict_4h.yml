@@ -1,0 +1,56 @@
+name: Predict 4h (Telegram alert)
+
+# Roda a cada 4h alinhado com as velas (00, 04, 08, 12, 16, 20 UTC).
+# +5min de folga depois do fechamento da vela pra OHLCV estar finalizado.
+
+on:
+  schedule:
+    - cron: '5 0,4,8,12,16,20 * * *'
+  workflow_dispatch:
+    inputs:
+      force_send:
+        description: 'Envia alerta mesmo sem sinal (teste)'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: predict-4h
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt lightgbm
+      - name: Pull latest data
+        run: |
+          git pull --rebase origin main || true
+      - name: Predict + alert
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ "${{ github.event.inputs.force_send }}" = "true" ]; then
+            python -m pipeline.predict_now --force-send
+          else
+            python -m pipeline.predict_now --quiet
+          fi
+      - name: Commit signals log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase --autostash origin main || true
+          git add data/signals.parquet
+          if git diff --staged --quiet; then
+            echo "no signal log changes"
+          else
+            git commit -m "data(signal): $(date -u +%FT%TZ)"
+            git push
+          fi
