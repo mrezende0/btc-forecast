@@ -50,7 +50,7 @@ PARAMS_PRIM = dict(objective="binary", metric="binary_logloss", verbose=-1, n_jo
 PARAMS_META = dict(objective="binary", metric="binary_logloss", verbose=-1, n_jobs=-1,
                    learning_rate=0.05, num_leaves=15, min_data_in_leaf=50,
                    feature_fraction=0.8, bagging_fraction=0.8, bagging_freq=5, lambda_l2=1.0)
-COST = 0.0008
+COST = 0.0015  # Binance taker 0.10% × 2 + slippage real
 HORIZON = 12
 THR_PRIM = 0.30  # lower threshold pra primário (deixa meta filtrar)
 THR_META = 0.50

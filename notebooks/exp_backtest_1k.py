@@ -37,10 +37,13 @@ HORIZON_MID = 12             # 48h
 HORIZON_LONG = 18            # 72h
 ATR_MULT = 3.0
 SIGNAL_THRESHOLD = 0.35
-COST = 0.0008                # round-trip
+COST = 0.0015                # round-trip (Binance taker 0.10% × 2 + slippage real)
+COST_STRESS = 0.0022         # cenário stress (mercado fino / slippage agressivo)
 BARS_PER_DAY = 6             # 24/4
 RETRAIN_EVERY_BARS = 90 * BARS_PER_DAY   # ~90 dias = 540 bars 4h
 START_DATE = datetime(2023, 1, 1, tzinfo=timezone.utc)
+VAL_END = datetime(2024, 12, 31, 23, 59, 59, tzinfo=timezone.utc)      # VAL = 2023-01 → 2024-12
+HOLDOUT_START = datetime(2025, 1, 1, tzinfo=timezone.utc)              # HOLDOUT = 2025-01 → fim (não foi visto na escolha de threshold)
 INITIAL_CAPITAL = 1000.0
 
 LGB_PARAMS = dict(
@@ -63,14 +66,15 @@ N_ROUNDS = 500
 def build_matrix(horizon_bars: int) -> tuple[pd.DataFrame, list[str]]:
     df = feat.build_v2_from_parquets(timeframe_min=TIMEFRAME_MIN, lag=1).drop_nulls(subset=["atr_14"])
     labeled = lab.triple_barrier(df, upper_mult=ATR_MULT, lower_mult=ATR_MULT, horizon_bars=horizon_bars)
+    labeled = lab.attach_uniqueness(labeled, horizon_bars=horizon_bars)
     labeled = labeled.with_columns((pl.col("label") == 1).cast(pl.Int8).alias("y"))
     fc = [
         c for c in labeled.columns
         if c not in feat.LAG_SAFE_EXCLUDE
-        and c not in {"label", "hit_bar", "barrier_ret", "upper_px", "lower_px", "y"}
+        and c not in {"label", "hit_bar", "barrier_ret", "upper_px", "lower_px", "y", "uniqueness_weight"}
     ]
     # atr_14 já está nas features; manter OHLC pra simulação de barreiras
-    keep = ["open_time", "open", "high", "low", "close", "y", *fc]
+    keep = ["open_time", "open", "high", "low", "close", "y", "uniqueness_weight", *fc]
     mat = labeled.select(keep).drop_nulls(subset=fc + ["y"]).to_pandas()
     return mat, fc
 
@@ -135,6 +139,8 @@ def main() -> None:
     atrs = mat_mid["atr_14"].to_numpy()
     y_mid_arr = mat_mid["y"].to_numpy()
     y_long_arr = mat_long.set_index("open_time")["y"]
+    w_mid_arr = mat_mid["uniqueness_weight"].to_numpy()
+    w_long_series = mat_long.set_index("open_time")["uniqueness_weight"]
 
     t_loop = time.time()
     for i in range(start_pos, n_bars):
@@ -145,17 +151,19 @@ def main() -> None:
             if cut_mid > 500:
                 X_tr = fc_mid_arr[:cut_mid]
                 y_tr = y_mid_arr[:cut_mid]
+                w_tr = w_mid_arr[:cut_mid]
                 model_mid = lgb.train(
-                    LGB_PARAMS, lgb.Dataset(X_tr, y_tr), num_boost_round=N_ROUNDS
+                    LGB_PARAMS, lgb.Dataset(X_tr, y_tr, weight=w_tr), num_boost_round=N_ROUNDS
                 )
                 # treino long: usa mat_long alinhado; pegar rows com open_time < open_times[i-HORIZON_LONG]
                 cutoff_ot = open_times[i - HORIZON_LONG] if i - HORIZON_LONG >= 0 else open_times[0]
                 mask_long = mat_long["open_time"] < cutoff_ot
                 X_trl = mat_long.loc[mask_long, fc_long].to_numpy()
                 y_trl = mat_long.loc[mask_long, "y"].to_numpy()
+                w_trl = mat_long.loc[mask_long, "uniqueness_weight"].to_numpy()
                 if len(X_trl) > 500:
                     model_long = lgb.train(
-                        LGB_PARAMS, lgb.Dataset(X_trl, y_trl), num_boost_round=N_ROUNDS
+                        LGB_PARAMS, lgb.Dataset(X_trl, y_trl, weight=w_trl), num_boost_round=N_ROUNDS
                     )
                     last_train_idx = i
                     elapsed = time.time() - t_loop
@@ -284,10 +292,85 @@ def main() -> None:
     # Sharpe anualizado — usa retornos por bar (4h => sqrt(6*365))
     eq_df["ret"] = eq_df["capital"].pct_change().fillna(0)
     bars_per_year = 6 * 365
-    if eq_df["ret"].std() > 0:
-        sharpe = (eq_df["ret"].mean() / eq_df["ret"].std()) * np.sqrt(bars_per_year)
-    else:
-        sharpe = 0.0
+
+    def _sharpe(rets: pd.Series) -> float:
+        sd = rets.std()
+        return float((rets.mean() / sd) * np.sqrt(bars_per_year)) if sd > 0 else 0.0
+
+    def _psr(rets: np.ndarray, sr_star: float = 0.0) -> float:
+        """Probabilistic Sharpe Ratio (Bailey-LdP 2012). Returns prob SR > sr_star."""
+        from scipy.stats import norm
+        n = len(rets)
+        if n < 30 or rets.std() == 0:
+            return float("nan")
+        sd = rets.std()
+        sr_hat = (rets.mean() / sd) * np.sqrt(bars_per_year)
+        # skew & kurtosis dos retornos (excess kurt: pandas default)
+        skew = float(pd.Series(rets).skew())
+        kurt = float(pd.Series(rets).kurtosis())  # excess kurtosis (Fisher)
+        sr_per_bar = rets.mean() / sd
+        denom = np.sqrt((1 - skew * sr_per_bar + (kurt) / 4 * sr_per_bar ** 2) / (n - 1))
+        if denom <= 0 or np.isnan(denom):
+            return float("nan")
+        sr_star_per_bar = sr_star / np.sqrt(bars_per_year)
+        z = (sr_per_bar - sr_star_per_bar) / denom
+        return float(norm.cdf(z))
+
+    def _bootstrap_sr_ci(rets: np.ndarray, n_boot: int = 2000, block: int = 50, alpha: float = 0.05):
+        """Stationary bootstrap (block-fixed proxy) pra IC do Sharpe."""
+        rng = np.random.default_rng(42)
+        n = len(rets)
+        if n < block * 2:
+            return (float("nan"), float("nan"))
+        sr_samples = np.empty(n_boot)
+        starts = rng.integers(0, n - block, size=n_boot * (n // block + 1))
+        cursor = 0
+        for b in range(n_boot):
+            sample = []
+            while len(sample) < n:
+                s = starts[cursor]
+                cursor += 1
+                sample.extend(rets[s:s + block])
+            sample = np.array(sample[:n])
+            sd = sample.std()
+            sr_samples[b] = (sample.mean() / sd) * np.sqrt(bars_per_year) if sd > 0 else 0
+        return (float(np.percentile(sr_samples, 100 * alpha / 2)),
+                float(np.percentile(sr_samples, 100 * (1 - alpha / 2))))
+
+    sharpe = _sharpe(eq_df["ret"])
+
+    # ----- segmentos VAL e HOLDOUT (A1.4) -----
+    eq_val = eq_df[eq_df["ts"] <= VAL_END]
+    eq_holdout = eq_df[eq_df["ts"] >= HOLDOUT_START]
+
+    def _segment_stats(seg: pd.DataFrame, label: str) -> dict:
+        if seg.empty:
+            return {"label": label, "empty": True}
+        rets = seg["capital"].pct_change().fillna(0).to_numpy()
+        sr = _sharpe(pd.Series(rets))
+        sr_ci = _bootstrap_sr_ci(rets[1:]) if len(rets) > 100 else (float("nan"), float("nan"))
+        psr0 = _psr(rets[1:], sr_star=0.0)
+        psr1 = _psr(rets[1:], sr_star=1.0)
+        # max DD do segmento (recalcula contra peak local)
+        peak_seg = seg["capital"].cummax()
+        dd_seg = float((seg["capital"] / peak_seg - 1).min())
+        return {
+            "label": label,
+            "n_bars": len(seg),
+            "start": seg["ts"].iloc[0].strftime("%Y-%m-%d"),
+            "end": seg["ts"].iloc[-1].strftime("%Y-%m-%d"),
+            "cap_start": float(seg["capital"].iloc[0]),
+            "cap_end": float(seg["capital"].iloc[-1]),
+            "ret_total": float(seg["capital"].iloc[-1] / seg["capital"].iloc[0] - 1),
+            "sharpe": sr,
+            "sharpe_ci95": sr_ci,
+            "psr_0": psr0,
+            "psr_1": psr1,
+            "max_dd": dd_seg,
+        }
+
+    val_stats = _segment_stats(eq_val, "VAL")
+    holdout_stats = _segment_stats(eq_holdout, "HOLDOUT")
 
     # buy & hold no mesmo período: comprado em closes[start_pos], vendido no último close
     bh_entry = closes[start_pos]
@@ -361,6 +444,31 @@ def main() -> None:
     print(f"  Max drawdown:           {100*max_dd:.2f}%")
     print(f"  % tempo em DD (<-0.5%): {100*pct_in_dd:.1f}%")
     print(f"  Sharpe anualizado:      {sharpe:.2f}")
+
+    print()
+    print(" Segmentação VAL / HOLDOUT (A1.4 — split honesto):")
+    for st in (val_stats, holdout_stats):
+        if st.get("empty"):
+            print(f"  {st['label']}: vazio")
+            continue
+        ci_lo, ci_hi = st["sharpe_ci95"]
+        print(
+            f"  {st['label']:<8s} {st['start']} → {st['end']}  "
+            f"cap {fmt_money(st['cap_start'])}→{fmt_money(st['cap_end'])} ({fmt_pct(st['ret_total'])})"
+        )
+        print(
+            f"    Sharpe={st['sharpe']:.2f}  CI95=[{ci_lo:.2f}, {ci_hi:.2f}]  "
+            f"PSR(0)={st['psr_0']:.3f}  PSR(1)={st['psr_1']:.3f}  MaxDD={100*st['max_dd']:.1f}%"
+        )
+
+    # Gate 1 do ROADMAP_v2: Sharpe HOLDOUT > 0.5 → continua; < 0.5 → projeto em fase terminal
+    if not holdout_stats.get("empty"):
+        gate_pass = holdout_stats["sharpe"] >= 0.5 and holdout_stats["psr_0"] >= 0.95
+        print()
+        if gate_pass:
+            print(f"  >>> GATE 1 (ROADMAP_v2): PASSA (Sharpe HOLDOUT={holdout_stats['sharpe']:.2f}, PSR(0)={holdout_stats['psr_0']:.3f})")
+        else:
+            print(f"  >>> GATE 1 (ROADMAP_v2): FALHA (Sharpe HOLDOUT={holdout_stats['sharpe']:.2f}, PSR(0)={holdout_stats['psr_0']:.3f}) — debate Gate 1 antes de A2")
 
     print()
     print(" Comparação Buy & Hold ($1000 mesmo período):")

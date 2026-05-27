@@ -37,7 +37,7 @@ TIMEFRAME = 240  # 4h
 HORIZON_BARS = 12  # 48h
 UPPER_MULT = 3.0
 LOWER_MULT = 1.5  # stop mais apertado → R:R 1:2
-COST = 0.0008
+COST = 0.0015  # Binance taker 0.10% × 2 + slippage real
 
 # %% [markdown]
 # ## 1. Build matrix em 4h

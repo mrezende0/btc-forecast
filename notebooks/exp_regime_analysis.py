@@ -40,7 +40,7 @@ H_MID = mdl.HORIZON_BARS               # 12 bars
 H_LONG = mdl.HORIZON_BARS_LONG         # 18 bars
 ATR_MULT = mdl.ATR_MULT                # 3.0
 THRESHOLD = mdl.SIGNAL_THRESHOLD       # 0.35
-COST = 0.0008                          # 0.08%
+COST = 0.0015                          # 0.15% (Binance taker 0.10% × 2 + slippage real)
 INITIAL_CAPITAL = 1000.0
 BARS_PER_YEAR = 6 * 365                # 4h => 6 bars/day
 

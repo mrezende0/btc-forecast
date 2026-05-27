@@ -27,7 +27,7 @@ import numpy as np
 
 DATA = Path("../data") if Path("../data").exists() else Path("data")
 BARS_PER_YEAR = 96 * 365  # velas 15m
-COST_ROUND = 0.0008  # 0.08% round-trip
+COST_ROUND = 0.0015  # 0.15% round-trip (Binance taker 0.10% × 2 + slippage real)
 
 ohlcv = pl.read_parquet(DATA / "ohlcv_15m.parquet").sort("open_time")
 o = ohlcv.with_columns(

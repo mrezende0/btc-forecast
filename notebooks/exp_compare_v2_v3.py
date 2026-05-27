@@ -25,7 +25,7 @@ from pipeline import features as feat, labels as lab, model as mdl
 
 # %% Config
 START_CAPITAL = 1000.0
-COST = 0.0008
+COST = 0.0015  # Binance taker 0.10% × 2 + slippage real
 H_MID = 12
 H_LONG = 18
 ATR_MULT = 3.0

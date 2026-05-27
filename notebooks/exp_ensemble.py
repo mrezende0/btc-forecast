@@ -35,7 +35,7 @@ import time
 TIMEFRAME = 240   # 4h
 HORIZON_BARS = 12 # 48h purge
 ATR_MULT = 3.0
-COST = 0.0008
+COST = 0.0015  # Binance taker 0.10% × 2 + slippage real
 THRESHOLD = 0.35
 BARS_PER_YEAR = 6 * 365  # 4h bars
 

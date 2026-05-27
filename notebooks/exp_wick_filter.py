@@ -38,7 +38,7 @@ from pipeline import features as feat, labels as lab
 TIMEFRAME = 240            # 4h
 HORIZON_BARS = 12          # 48h
 ATR_MULT = 3.0
-COST = 0.0008
+COST = 0.0015  # Binance taker 0.10% × 2 + slippage real
 MODEL_THR = 0.35           # threshold de sinal (baseline v2)
 
 # %% [markdown]

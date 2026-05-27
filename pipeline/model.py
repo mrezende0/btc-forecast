@@ -38,16 +38,20 @@ N_ROUNDS = 500
 
 
 def build_training_matrix(horizon_bars: int = HORIZON_BARS) -> tuple[pl.DataFrame, list[str]]:
-    """Constrói matriz completa + lista de feature columns para um horizonte específico."""
+    """Constrói matriz completa + lista de feature columns para um horizonte específico.
+
+    Inclui `uniqueness_weight` (LdP eq.4.2) pra ponderar samples sobrepostos no LightGBM.
+    """
     df = feat.build_v2_from_parquets(timeframe_min=TIMEFRAME_MIN, lag=1).drop_nulls(subset=["atr_14"])
     labeled = lab.triple_barrier(df, upper_mult=ATR_MULT, lower_mult=ATR_MULT, horizon_bars=horizon_bars)
+    labeled = lab.attach_uniqueness(labeled, horizon_bars=horizon_bars)
     labeled = labeled.with_columns((pl.col("label") == 1).cast(pl.Int8).alias("y"))
     feature_cols = [
         c for c in labeled.columns
         if c not in feat.LAG_SAFE_EXCLUDE
-        and c not in {"label", "hit_bar", "barrier_ret", "upper_px", "lower_px", "y"}
+        and c not in {"label", "hit_bar", "barrier_ret", "upper_px", "lower_px", "y", "uniqueness_weight"}
     ]
-    mat = labeled.select(["open_time", "close", "y", "barrier_ret", *feature_cols])
+    mat = labeled.select(["open_time", "close", "y", "barrier_ret", "uniqueness_weight", *feature_cols])
     mat = mat.drop_nulls(subset=feature_cols + ["y"])
     return mat, feature_cols
 
@@ -55,11 +59,14 @@ def build_training_matrix(horizon_bars: int = HORIZON_BARS) -> tuple[pl.DataFram
 def train(mat: pl.DataFrame, feature_cols: list[str], horizon_bars: int = HORIZON_BARS) -> lgb.Booster:
     """Treina com purge: exclui últimas `horizon_bars` linhas do treino
     (cujos labels dependem de futuro que ainda não temos).
+
+    Aplica `uniqueness_weight` (LdP) em `lgb.Dataset(weight=...)` se disponível.
     """
     use = mat.head(mat.height - horizon_bars)
     X = use.select(feature_cols).to_numpy()
     y = use["y"].to_numpy()
-    return lgb.train(LGB_PARAMS, lgb.Dataset(X, y), num_boost_round=N_ROUNDS)
+    weight = use["uniqueness_weight"].to_numpy() if "uniqueness_weight" in use.columns else None
+    return lgb.train(LGB_PARAMS, lgb.Dataset(X, y, weight=weight), num_boost_round=N_ROUNDS)
 
 
 def predict_latest(model: lgb.Booster, mat: pl.DataFrame, feature_cols: list[str]) -> dict:

@@ -42,7 +42,7 @@ from pipeline import features as feat, labels as lab
 
 TIMEFRAME = 240          # 4h
 ATR_MULT = 3.0
-COST = 0.0008
+COST = 0.0015  # Binance taker 0.10% × 2 + slippage real
 THRESHOLD = 0.35
 BARS_PER_YEAR = 6 * 365  # 4h => 6 bars/day
 

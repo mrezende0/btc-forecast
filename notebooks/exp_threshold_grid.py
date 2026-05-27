@@ -44,7 +44,7 @@ from pipeline import features as feat, labels as lab
 
 TIMEFRAME = 240          # 4h
 ATR_MULT = 3.0
-COST = 0.0008            # 0.08% round-trip
+COST = 0.0015            # 0.15% round-trip (Binance taker 0.10% × 2 + slippage real)
 INITIAL_CAPITAL = 1000.0
 
 HORIZON_MID = 12   # 48h

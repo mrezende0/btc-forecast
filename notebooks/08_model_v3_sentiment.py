@@ -74,7 +74,7 @@ PARAMS = dict(
     learning_rate=0.05, num_leaves=31, min_data_in_leaf=100,
     feature_fraction=0.8, bagging_fraction=0.8, bagging_freq=5, lambda_l2=0.5,
 )
-COST = 0.0008
+COST = 0.0015  # Binance taker 0.10% × 2 + slippage real
 HORIZON = 12
 THR = 0.35
 

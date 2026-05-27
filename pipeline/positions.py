@@ -25,7 +25,7 @@ import polars as pl
 from pipeline import storage
 
 POSITIONS = Path("data") / "positions.parquet"
-COST_ROUND = 0.0008  # 0.08% round-trip
+COST_ROUND = 0.0015  # 0.15% round-trip (Binance taker 0.10% × 2 + slippage real)
 
 
 def read() -> pl.DataFrame:

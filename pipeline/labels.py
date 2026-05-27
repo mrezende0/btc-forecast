@@ -93,3 +93,46 @@ def triple_barrier(
         pl.Series("upper_px", upper_px),
         pl.Series("lower_px", lower_px),
     )
+
+
+def avg_uniqueness(
+    hit_bar: np.ndarray,
+    horizon_bars: int,
+) -> np.ndarray:
+    """López de Prado, AFML eq.4.2 — peso por sobreposição de labels.
+
+    Triple-barrier labels com horizonte longo se sobrepõem: label `i` ainda
+    está "vivo" enquanto labels `i+1, i+2, ...` começam. Treinar com peso
+    uniforme conta a mesma informação várias vezes → otimismo.
+
+    Para cada label i:
+        t_0 = i  (entrada na barra i)
+        t_1 = i + hit_bar[i]  se NaN → horizonte completo (i + horizon_bars)
+        concorrência(t) = #labels ativos em t
+        uniqueness_i = média_t∈[t_0, t_1] de (1/concorrência(t))
+
+    Retorna vetor de pesos ∈ (0, 1]. 1 = label não sobrepõe nenhum outro.
+    """
+    n = len(hit_bar)
+    spans = np.where(np.isnan(hit_bar), horizon_bars, hit_bar).astype(np.int64)
+    starts = np.arange(n, dtype=np.int64)
+    ends = np.minimum(starts + spans, n - 1)
+
+    diff = np.zeros(n + 1, dtype=np.int64)
+    np.add.at(diff, starts, 1)
+    end_plus1 = ends + 1
+    np.add.at(diff, end_plus1[end_plus1 < n + 1], -1)
+    concurrency = np.maximum(np.cumsum(diff)[:n], 1)
+
+    inv_conc = 1.0 / concurrency
+    csum = np.concatenate([[0.0], np.cumsum(inv_conc)])
+    lengths = (ends - starts + 1).astype(np.float64)
+    return (csum[ends + 1] - csum[starts]) / lengths
+
+
+def attach_uniqueness(df: pl.DataFrame, horizon_bars: int) -> pl.DataFrame:
+    """Adiciona coluna `uniqueness_weight` ao DF com saída de triple_barrier."""
+    if "hit_bar" not in df.columns:
+        raise ValueError("DF precisa ter coluna hit_bar (rodar triple_barrier antes)")
+    w = avg_uniqueness(df["hit_bar"].to_numpy(), horizon_bars=horizon_bars)
+    return df.with_columns(pl.Series("uniqueness_weight", w))
