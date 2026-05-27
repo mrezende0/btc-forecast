@@ -287,3 +287,136 @@ def build_from_parquets(lag: int = 1) -> pl.DataFrame:
     sd_path = DATA / "sentiment_daily.parquet"
     sd = pl.read_parquet(sd_path) if sd_path.exists() else pl.DataFrame()
     return build(ohlcv, funding, macro, fg, sd, lag=lag)
+
+
+# ============================================================================
+# v2 — timeframe configurável + interactions + regime
+# ============================================================================
+def add_technical_tf(df: pl.DataFrame, bph: int, bpd: int, bpw: int) -> pl.DataFrame:
+    """Versão timeframe-aware. `bph` = bars per hour (pode ser fracionário arredondado)."""
+    out = df.sort("open_time").with_columns(
+        pl.col("close").pct_change().alias("ret_1"),
+        pl.col("close").pct_change(max(1, bph)).alias("ret_1h"),
+        pl.col("close").pct_change(max(1, bph * 4)).alias("ret_4h"),
+        pl.col("close").pct_change(bpd).alias("ret_1d"),
+        pl.col("close").pct_change(bpw).alias("ret_1w"),
+        (pl.col("close").log() - pl.col("close").shift(1).log()).alias("logret_1"),
+    )
+    out = out.with_columns(
+        pl.col("logret_1").rolling_std(window_size=max(2, bph * 4)).alias("rv_4h"),
+        pl.col("logret_1").rolling_std(window_size=bpd).alias("rv_1d"),
+        pl.col("logret_1").rolling_std(window_size=bpw).alias("rv_1w"),
+        _atr(14),
+        _rsi("close", 14, "rsi_14"),
+        _rsi("close", max(2, bpd // 2), "rsi_halfday"),
+        _rsi("close", bpd, "rsi_1d"),
+    )
+    out = out.with_columns(
+        pl.col("close").rolling_mean(window_size=bpd * 7).alias("ma_7d"),
+        pl.col("close").rolling_mean(window_size=bpd * 30).alias("ma_30d"),
+        pl.col("close").rolling_mean(window_size=bpd * 90).alias("ma_90d"),
+    )
+    out = out.with_columns(
+        (pl.col("close") / pl.col("ma_7d") - 1).alias("dist_ma_7d"),
+        (pl.col("close") / pl.col("ma_30d") - 1).alias("dist_ma_30d"),
+        (pl.col("close") / pl.col("ma_90d") - 1).alias("dist_ma_90d"),
+    )
+    out = out.with_columns(
+        _rolling_zscore("volume", bpd * 7, "vol_z7d"),
+        _rolling_zscore("volume", bpd * 30, "vol_z30d"),
+    )
+    bb_w = max(4, bpd // 2)
+    out = out.with_columns(
+        pl.col("close").rolling_mean(window_size=bb_w).alias("_bb_mid"),
+        pl.col("close").rolling_std(window_size=bb_w).alias("_bb_sd"),
+    )
+    out = out.with_columns(
+        ((pl.col("close") - pl.col("_bb_mid")) / (pl.col("_bb_sd") * 2)).alias("bb_pos")
+    ).drop(["_bb_mid", "_bb_sd"])
+    return out
+
+
+def add_interactions(df: pl.DataFrame) -> pl.DataFrame:
+    """Cross-feature combinations baseadas em hipóteses da EDA.
+
+    - funding × ret_1d: funding alto + price up = correção iminente?
+    - vix_ret × spx_ret: risk-off uniforme vs divergência
+    - rsi × bb_pos: confirmação multi-sinal de extremo
+    - dxy_z × dist_ma_30d: força dólar + distância de trend
+    - fg_chg7 × ret_1w: sentimento mudando + price action
+    """
+    return df.with_columns(
+        (pl.col("funding") * pl.col("ret_1d")).alias("ix_funding_ret1d"),
+        (pl.col("vix_ret") * pl.col("spx_ret")).alias("ix_vix_spx"),
+        (pl.col("rsi_14") * pl.col("bb_pos")).alias("ix_rsi_bb"),
+        (pl.col("dxy_z30") * pl.col("dist_ma_30d")).alias("ix_dxy_dist30"),
+        (pl.col("fg_chg7") * pl.col("ret_1w")).alias("ix_fgchg_ret1w"),
+        (pl.col("funding_z90") * pl.col("rv_1d")).alias("ix_funding_vol"),
+    )
+
+
+def add_regime(df: pl.DataFrame) -> pl.DataFrame:
+    """Indicadores de regime — bull/bear/chop e vol baixa/alta.
+
+    - is_uptrend_short: MA_7d > MA_30d
+    - is_uptrend_long:  MA_30d > MA_90d
+    - trend_strength:   abs(dist_ma_30d)
+    - vol_high:         rv_1d acima do percentil 75 rolling 30d
+    - drawdown_from_high: distância da máxima 30d
+    """
+    return df.with_columns(
+        (pl.col("ma_7d") > pl.col("ma_30d")).cast(pl.Int8).alias("is_uptrend_short"),
+        (pl.col("ma_30d") > pl.col("ma_90d")).cast(pl.Int8).alias("is_uptrend_long"),
+        pl.col("dist_ma_30d").abs().alias("trend_strength"),
+        (
+            pl.col("close") / pl.col("close").rolling_max(window_size=180) - 1
+        ).alias("drawdown_30d"),
+    ).with_columns(
+        (
+            pl.col("rv_1d") > pl.col("rv_1d").rolling_quantile(window_size=180, quantile=0.75)
+        ).cast(pl.Int8).alias("vol_high"),
+    )
+
+
+def build_v2(
+    ohlcv: pl.DataFrame,
+    funding: pl.DataFrame,
+    macro: pl.DataFrame,
+    fg: pl.DataFrame,
+    sentiment_daily: pl.DataFrame | None = None,
+    timeframe_min: int = 240,  # 4h default
+    lag: int = 1,
+) -> pl.DataFrame:
+    """Pipeline completa em timeframe arbitrário, com interactions + regime."""
+    from pipeline import resample
+
+    if timeframe_min != 15:
+        ohlcv = resample.resample_ohlcv(ohlcv, minutes=timeframe_min)
+
+    # bars/hour fractional → round
+    bph = max(1, round(60 / timeframe_min))
+    bpd = round(60 * 24 / timeframe_min)
+    bpw = bpd * 7
+
+    df = ohlcv.sort("open_time")
+    df = add_technical_tf(df, bph=bph, bpd=bpd, bpw=bpw)
+    df = add_funding(df, funding)
+    df = add_macro(df, macro)
+    df = add_sentiment_fg(df, fg)
+    if sentiment_daily is not None and not sentiment_daily.is_empty():
+        df = add_sentiment_news(df, sentiment_daily)
+    df = add_calendar(df)
+    df = add_interactions(df)
+    df = add_regime(df)
+    df = apply_lag(df, lag=lag)
+    return df
+
+
+def build_v2_from_parquets(timeframe_min: int = 240, lag: int = 1) -> pl.DataFrame:
+    ohlcv = pl.read_parquet(DATA / "ohlcv_15m.parquet")
+    funding = pl.read_parquet(DATA / "funding.parquet")
+    macro = pl.read_parquet(DATA / "macro_daily.parquet")
+    fg = pl.read_parquet(DATA / "fg_daily.parquet")
+    sd_path = DATA / "sentiment_daily.parquet"
+    sd = pl.read_parquet(sd_path) if sd_path.exists() else pl.DataFrame()
+    return build_v2(ohlcv, funding, macro, fg, sd, timeframe_min=timeframe_min, lag=lag)
