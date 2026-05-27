@@ -14,7 +14,7 @@ SPOT_KLINES = "https://data-api.binance.vision/api/v3/klines"
 FUNDING = "https://fapi.binance.com/fapi/v1/fundingRate"
 PERP_KLINES = "https://fapi.binance.com/fapi/v1/klines"  # perpetual futures
 
-SYMBOL = "BTCUSDT"
+SYMBOL = "BTCUSDT"  # default — pode ser override via parâmetro
 INTERVAL = "15m"
 INTERVAL_MS = 15 * 60 * 1000
 CLOSED_BUFFER_MS = 60 * 1000  # 1min de folga após a vela fechar
@@ -38,7 +38,7 @@ def _get_with_retries(url: str, params: dict, timeout: int = 30, retries: int = 
         raise last
 
 
-def fetch_klines(start_ms: int, end_ms: int | None = None) -> pl.DataFrame:
+def fetch_klines(start_ms: int, end_ms: int | None = None, symbol: str = SYMBOL) -> pl.DataFrame:
     end_ms = end_ms or _now_ms()
     rows: list[list] = []
     cursor = start_ms
@@ -46,7 +46,7 @@ def fetch_klines(start_ms: int, end_ms: int | None = None) -> pl.DataFrame:
         r = _get_with_retries(
             SPOT_KLINES,
             params={
-                "symbol": SYMBOL,
+                "symbol": symbol,
                 "interval": INTERVAL,
                 "startTime": cursor,
                 "endTime": end_ms,
@@ -89,7 +89,7 @@ def fetch_klines(start_ms: int, end_ms: int | None = None) -> pl.DataFrame:
     return df.filter(pl.col("close_time") <= cutoff)
 
 
-def fetch_funding(start_ms: int, end_ms: int | None = None) -> pl.DataFrame:
+def fetch_funding(start_ms: int, end_ms: int | None = None, symbol: str = SYMBOL) -> pl.DataFrame:
     end_ms = end_ms or _now_ms()
     rows: list[dict] = []
     cursor = start_ms
@@ -97,7 +97,7 @@ def fetch_funding(start_ms: int, end_ms: int | None = None) -> pl.DataFrame:
         r = requests.get(
             FUNDING,
             params={
-                "symbol": SYMBOL,
+                "symbol": symbol,
                 "startTime": cursor,
                 "endTime": end_ms,
                 "limit": 1000,
@@ -132,8 +132,8 @@ def fetch_funding(start_ms: int, end_ms: int | None = None) -> pl.DataFrame:
     )
 
 
-def fetch_perp_klines(start_ms: int, end_ms: int | None = None) -> pl.DataFrame:
-    """OHLCV de perpetuals BTCUSDT (fapi) — usado pra computar basis vs spot.
+def fetch_perp_klines(start_ms: int, end_ms: int | None = None, symbol: str = SYMBOL) -> pl.DataFrame:
+    """OHLCV de perpetuals (fapi) — usado pra computar basis vs spot.
 
     Mesmo schema do spot pra simplificar joins por open_time.
     """
@@ -144,7 +144,7 @@ def fetch_perp_klines(start_ms: int, end_ms: int | None = None) -> pl.DataFrame:
         r = requests.get(
             PERP_KLINES,
             params={
-                "symbol": SYMBOL,
+                "symbol": symbol,
                 "interval": INTERVAL,
                 "startTime": cursor,
                 "endTime": end_ms,

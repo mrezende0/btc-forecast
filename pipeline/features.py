@@ -468,13 +468,15 @@ def build_v2(
     return df
 
 
-def build_v2_from_parquets(timeframe_min: int = 240, lag: int = 1) -> pl.DataFrame:
-    ohlcv = pl.read_parquet(DATA / "ohlcv_15m.parquet")
-    funding = pl.read_parquet(DATA / "funding.parquet")
+def build_v2_from_parquets(timeframe_min: int = 240, lag: int = 1, asset: str = "BTC") -> pl.DataFrame:
+    """Build features from parquets do ativo especificado. Default BTC (legado)."""
+    from pipeline import assets as _assets
+    cfg = _assets.get(asset)
+    ohlcv = pl.read_parquet(cfg["ohlcv"])
+    funding = pl.read_parquet(cfg["funding"])
     macro = pl.read_parquet(DATA / "macro_daily.parquet")
     fg = pl.read_parquet(DATA / "fg_daily.parquet")
     sd_path = DATA / "sentiment_daily.parquet"
     sd = pl.read_parquet(sd_path) if sd_path.exists() else pl.DataFrame()
-    perp_path = DATA / "perp_15m.parquet"
-    perp = pl.read_parquet(perp_path) if perp_path.exists() else pl.DataFrame()
+    perp = pl.read_parquet(cfg["perp"]) if cfg["perp"].exists() else pl.DataFrame()
     return build_v2(ohlcv, funding, macro, fg, sd, perp=perp, timeframe_min=timeframe_min, lag=lag)
