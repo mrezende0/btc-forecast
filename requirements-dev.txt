@@ -1,14 +1,24 @@
 -r requirements.txt
+
+# Modelagem básica (compatível Python 3.13)
 jupyter>=1.0
 pandas>=2.2
 pandas-ta>=0.3.14b
-mlfinpy>=1.5
 lightgbm>=4.3
 shap>=0.45
-vectorbt>=0.26
 scikit-learn>=1.4
 matplotlib>=3.8
 seaborn>=0.13
+tqdm>=4.66
+
+# Sentiment scoring (FinBERT)
 transformers>=4.40
 torch>=2.2
-tqdm>=4.66
+
+# ⚠️  Pacotes abaixo exigem Python 3.11 ou 3.12 (numba não suporta 3.13).
+# Quando chegar na Fase 3 (labels) crie um venv separado:
+#   /opt/homebrew/bin/python3.12 -m venv .venv-ml
+#   .venv-ml/bin/pip install -r requirements-dev.txt -r requirements-labels.txt
+#
+# mlfinpy>=0.1.2
+# vectorbt>=0.26

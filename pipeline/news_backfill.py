@@ -31,36 +31,41 @@ def run(
         else datetime.now(tz=timezone.utc)
     )
 
-    print(f"[gdelt] {start_dt.date()} → {end_dt.date()}  (chunk={chunk})")
+    print(f"[gdelt] {start_dt.date()} → {end_dt.date()}  (chunk={chunk})", flush=True)
+
+    def _normalize(df: pl.DataFrame) -> pl.DataFrame:
+        df = df.with_columns(
+            pl.col("url").alias("id"),
+            pl.lit(None).cast(pl.Utf8).alias("body"),
+            pl.lit(None).cast(pl.Utf8).alias("sentiment_src"),
+            pl.lit(None).cast(pl.Utf8).alias("categories"),
+        )
+        keep = [
+            "id", "url", "title", "body", "published_ts",
+            "domain", "language", "sentiment_src", "categories", "source",
+        ]
+        return df.select([c for c in keep if c in df.columns])
+
+    def _flush(batch: pl.DataFrame) -> None:
+        if batch.is_empty():
+            return
+        n = storage.upsert(NEWS, _normalize(batch), "id")
+        print(f"[gdelt]  💾 flush: +{n} novos no Parquet", flush=True)
+
     df = gdelt.fetch_range(
         start_dt,
         end_dt,
         query=query or gdelt.DEFAULT_QUERY,
         chunk=chunk,
+        flush_callback=_flush,
     )
 
     if df.is_empty():
-        print("[gdelt] nenhum artigo retornado")
+        print("[gdelt] nenhum artigo retornado no total", flush=True)
         return
 
-    # Normaliza schema com CoinDesk (gera colunas faltantes pra merge)
-    df = df.with_columns(
-        pl.lit(None).cast(pl.Utf8).alias("id"),
-        pl.lit(None).cast(pl.Utf8).alias("body"),
-        pl.lit(None).cast(pl.Utf8).alias("sentiment_src"),
-        pl.lit(None).cast(pl.Utf8).alias("categories"),
-    )
-    # ID estável a partir da URL (GDELT não tem ID próprio)
-    df = df.with_columns(pl.col("url").alias("id"))
-
-    keep = [
-        "id", "url", "title", "body", "published_ts",
-        "domain", "language", "sentiment_src", "categories", "source",
-    ]
-    df = df.select([c for c in keep if c in df.columns])
-
-    n = storage.upsert(NEWS, df, "id")
-    print(f"[gdelt] +{n} artigos novos (total {storage.read(NEWS).height})")
+    total = storage.read(NEWS).height
+    print(f"[gdelt] ✓ concluído. Parquet total = {total} artigos", flush=True)
 
 
 if __name__ == "__main__":
