@@ -1,0 +1,197 @@
+# Stack proposta — btc-forecast live ops (paper trade testnet).
+# Tudo num host (Hetzner CX22 / Oracle Free 4c ARM). docker compose up -d.
+#
+# Volumes:
+#   ./data    → parquet, sqlite, features.duckdb (compartilhado read entre serviços)
+#   ./models  → artefatos LGBM versionados (lgbm_dual_v{N}.txt + metadata.json)
+#   ./logs    → JSON logs (alvo do Promtail/Alloy)
+#
+# Secrets via .env (NÃO commitar): BINANCE_TESTNET_KEY/SECRET, TELEGRAM_*, GRAFANA_ADMIN_PASSWORD.
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    # Redis = state store: open_positions, last_signal, killed flag, pubsub bar_closed.
+
+  predictor:
+    build:
+      context: ../..
+      dockerfile: proposals/live_ops_stack/Dockerfile
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - REDIS_URL=redis://redis:6379/0
+      - MODELS_DIR=/models
+      - DATA_DIR=/data
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=json
+    volumes:
+      - ./data:/data
+      - ./models:/models
+      - ./logs:/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    # FastAPI uvicorn:
+    #   GET  /healthz   liveness
+    #   GET  /readyz    readiness (model loaded? redis up?)
+    #   GET  /metrics   Prometheus
+    #   POST /predict   {bar_open_time} idempotente, retorna sinal
+    # APScheduler interno dispara /predict no minuto :05 das velas 4h (00,04,08,12,16,20 UTC).
+
+  executor:
+    build:
+      context: ../..
+      dockerfile: proposals/live_ops_stack/Dockerfile
+    restart: unless-stopped
+    command: ["python", "-m", "executor.paper"]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - BINANCE_TESTNET_KEY=${BINANCE_TESTNET_KEY}
+      - BINANCE_TESTNET_SECRET=${BINANCE_TESTNET_SECRET}
+      - BINANCE_BASE_URL=https://testnet.binancefuture.com
+      - MODE=paper   # paper | dryrun | live (live = bloqueado por flag dupla)
+      - MAX_OPEN_POSITIONS=1
+      - LOG_FORMAT=json
+    volumes:
+      - ./data:/data
+      - ./logs:/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import redis,os; r=redis.from_url(os.environ['REDIS_URL']); exit(0 if r.ping() else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    # Subscreve canal pubsub "signal:new". Pre-trade risk checks:
+    #   1. redis.get("killed") == "0"
+    #   2. open_positions < MAX_OPEN_POSITIONS
+    #   3. stop_distance / entry in [0.005, 0.10]
+    #   4. account_balance_testnet > min_margin
+    # Envia MARKET + STOP_MARKET reduceOnly + TAKE_PROFIT_MARKET reduceOnly.
+    # Reconcile loop 60s: fetch_positions() vs SQLite, alerta divergência.
+
+  drift_watchdog:
+    build:
+      context: ../..
+      dockerfile: proposals/live_ops_stack/Dockerfile
+    restart: unless-stopped
+    command: ["python", "-m", "scripts.drift_watchdog", "--loop", "--interval-min", "60"]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - PSI_WARN=0.10
+      - PSI_TRIP=0.25
+      - REFERENCE_PATH=/data/reference_features.parquet
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - LOG_FORMAT=json
+    volumes:
+      - ./data:/data
+      - ./logs:/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:9101:9101"  # /metrics
+    # Loop 1h: carrega features atuais (30d), reference (treino), PSI por feature.
+    # Gauge psi_per_feature{feature="funding_z90"} 0.07
+    # Counter psi_trip_total
+    # Trip: redis.set("killed",1, ex=86400) + Telegram P0.
+
+  kill_switch:
+    build:
+      context: ../..
+      dockerfile: proposals/live_ops_stack/Dockerfile
+    restart: unless-stopped
+    command: ["python", "-m", "scripts.kill_switch", "--loop", "--interval-min", "60"]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - SHARPE_MIN_90D=0.30
+      - SHARPE_BREACH_WEEKS=4
+      - API_ERROR_BUDGET_1H=20
+      - PROMETHEUS_URL=http://prometheus:9090
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - LOG_FORMAT=json
+    volumes:
+      - ./data:/data
+      - ./logs:/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prom_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=90d'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  loki:
+    image: grafana/loki:3.2.1
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki_data:/loki
+    ports:
+      - "127.0.0.1:3100:3100"
+
+  promtail:
+    image: grafana/promtail:3.2.1
+    restart: unless-stopped
+    volumes:
+      - ./logs:/logs:ro
+      - ./promtail.yml:/etc/promtail/config.yml:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-changeme}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "127.0.0.1:3000:3000"  # NUNCA expor :3000 público; usa Caddy reverse proxy + basic auth
+    depends_on:
+      - prometheus
+      - loki
+
+volumes:
+  redis_data:
+  prom_data:
+  loki_data:
+  grafana_data:
