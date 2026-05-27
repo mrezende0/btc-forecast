@@ -65,13 +65,18 @@ def format_signal(pred: dict, state: dict | None = None, is_test: bool = False, 
         f"📊 Vela: `{ts:%Y-%m-%d %H:%M} UTC` (4h)",
         f"💵 Preço: *${price:,.0f}*",
     ]
-    # Se houver pred dual-horizon, mostrar ambos
-    if "proba_mid" in pred and "proba_long_horizon" in pred:
-        lines.append(
-            f"🎯 Modelos: mid 48h *{pred['proba_mid']*100:.1f}%*  +  long 72h *{pred['proba_long_horizon']*100:.1f}%*  "
-            f"(both > 35% pra confirmar)"
-        )
-        # Indica filtro de regime
+    # Mostra proba do modelo MID (regra de produção) + long_h informativo se houver
+    if "proba_mid" in pred:
+        rule = pred.get("ensemble_rule", "MID")
+        proba_mid_pct = pred["proba_mid"] * 100
+        if pred.get("proba_long_horizon") is not None:
+            lines.append(
+                f"🎯 Modelos: mid 48h *{proba_mid_pct:.1f}%*  ·  long 72h *{pred['proba_long_horizon']*100:.1f}%*  "
+                f"(regra: {rule})"
+            )
+        else:
+            lines.append(f"🎯 Modelo mid 48h: *{proba_mid_pct:.1f}%*  (threshold 35%, regra: {rule})")
+        # Filtro de regime
         if pred.get("in_bear"):
             ret_30d_pct = pred.get("ret_30d", 0) * 100
             lines.append(f"🐻 Filtro BEAR ATIVO: BTC {ret_30d_pct:+.1f}% nos últimos 30d (sinal suprimido)")

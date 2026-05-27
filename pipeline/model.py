@@ -20,6 +20,8 @@ SIGNAL_THRESHOLD = 0.35
 SIZING_MODE = "full"       # "full" = 100% do capital, "risk1" = 1% risk on stop
 RISK_PER_TRADE = 0.01      # usado se SIZING_MODE="risk1" — sizing conservador
 NO_BEAR_THRESHOLD = -0.05  # se BTC caiu >5% no último mês → suprime sinal (validado em exp_regime_analysis)
+ENSEMBLE_RULE = "MID"      # winner A1-A (Red Team M5 passou): MID sozinho > AND.
+                           # Valores: "MID" (prod) | "AND" (legado dual-horizon) | "OR"
 
 LGB_PARAMS = dict(
     objective="binary",
@@ -84,32 +86,36 @@ def predict_latest(model: lgb.Booster, mat: pl.DataFrame, feature_cols: list[str
 
 
 def predict_dual_horizon() -> dict:
-    """Pipeline completa do modelo de PRODUÇÃO (dual-horizon AND).
+    """Pipeline completa do modelo de PRODUÇÃO.
 
-    Treina 2 modelos (mid=12 bars=48h, long=18 bars=72h) e prediz na vela
-    mais recente comum aos dois. Sinal = AMBOS > threshold.
+    Mantém o nome "dual_horizon" por compat com workflows, mas a REGRA atual
+    (ENSEMBLE_RULE) é configurável. Default "MID" (winner A1-A validado por
+    Red Team M5): apenas o modelo mid decide o sinal. Long fica informativo
+    no payload pra debug.
 
-    Validado no exp `exp_multi_horizon` + teste manual: Sharpe 1.29 vs 0.88 do mid sozinho.
+    Regras:
+      MID — só mid (winner: VAL Sharpe 0.36 / HOLDOUT 1.53 / PSR 0.952)
+      AND — mid AND long (legado dual-horizon, pior em backtest honesto)
+      OR  — mid OR long (alta cobertura, geralmente Sharpe pior)
     """
     mat_mid, fc_mid = build_training_matrix(horizon_bars=HORIZON_BARS)
-    mat_long, fc_long = build_training_matrix(horizon_bars=HORIZON_BARS_LONG)
-
     m_mid = train(mat_mid, fc_mid, horizon_bars=HORIZON_BARS)
-    m_long = train(mat_long, fc_long, horizon_bars=HORIZON_BARS_LONG)
 
     last_mid = mat_mid.tail(1)
     proba_mid = float(m_mid.predict(last_mid.select(fc_mid).to_numpy())[0])
-
-    # Match última vela do long pela mesma open_time
     ot = int(last_mid["open_time"][0])
-    long_row = mat_long.filter(pl.col("open_time") == ot)
-    if long_row.is_empty():
-        # Long matrix pode ser ligeiramente mais curta (purge maior) — usa a última disponível
-        long_row = mat_long.tail(1)
-    proba_long_h = float(m_long.predict(long_row.select(fc_long).to_numpy())[0])
+
+    # Long-horizon: só treina/prediz se regra precisar (economiza ~30s no cron)
+    proba_long_h = None
+    if ENSEMBLE_RULE in ("AND", "OR"):
+        mat_long, fc_long = build_training_matrix(horizon_bars=HORIZON_BARS_LONG)
+        m_long = train(mat_long, fc_long, horizon_bars=HORIZON_BARS_LONG)
+        long_row = mat_long.filter(pl.col("open_time") == ot)
+        if long_row.is_empty():
+            long_row = mat_long.tail(1)
+        proba_long_h = float(m_long.predict(long_row.select(fc_long).to_numpy())[0])
 
     # Filtro de regime: suprime sinal se BTC caiu mais que NO_BEAR_THRESHOLD no último mês.
-    # Mês = ~180 bars 4h (30 dias × 6 bars/dia). Compara close atual vs close ~30d atrás.
     bars_per_month = 180
     if mat_mid.height >= bars_per_month + 1:
         close_now = float(mat_mid["close"][-1])
@@ -120,25 +126,37 @@ def predict_dual_horizon() -> dict:
 
     in_bear = ret_30d < NO_BEAR_THRESHOLD
 
-    # Sinal final: AMBOS concordam E não está em bear
+    # Sinal por regra
     signal_mid = proba_mid > SIGNAL_THRESHOLD
-    signal_long_h = proba_long_h > SIGNAL_THRESHOLD
-    signal_ml = signal_mid and signal_long_h
+    signal_long_h = (proba_long_h is not None) and (proba_long_h > SIGNAL_THRESHOLD)
+    if ENSEMBLE_RULE == "MID":
+        signal_ml = signal_mid
+    elif ENSEMBLE_RULE == "AND":
+        signal_ml = signal_mid and signal_long_h
+    elif ENSEMBLE_RULE == "OR":
+        signal_ml = signal_mid or signal_long_h
+    else:
+        raise ValueError(f"ENSEMBLE_RULE desconhecido: {ENSEMBLE_RULE}")
+
     signal = signal_ml and not in_bear
+
+    # Confidence baseado em proba_mid (regra MID em prod)
+    confidence_pct = (proba_mid - SIGNAL_THRESHOLD) / (1 - SIGNAL_THRESHOLD) * 100
 
     return {
         "open_time": ot,
         "close": float(last_mid["close"][0]),
         "proba_mid": proba_mid,
-        "proba_long_horizon": proba_long_h,
+        "proba_long_horizon": proba_long_h,  # None se regra=MID
         "proba_long": proba_mid,   # backward compat com format_signal
         "signal_mid": signal_mid,
         "signal_long_h": signal_long_h,
         "signal_ml": signal_ml,
+        "ensemble_rule": ENSEMBLE_RULE,
         "in_bear": in_bear,
         "ret_30d": ret_30d,
         "signal": signal,
-        "confidence_pct": (min(proba_mid, proba_long_h) - SIGNAL_THRESHOLD) / (1 - SIGNAL_THRESHOLD) * 100,
+        "confidence_pct": confidence_pct,
         "_mat_mid": mat_mid,
         "_features_mid": fc_mid,
     }
