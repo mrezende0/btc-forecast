@@ -19,7 +19,7 @@ from pathlib import Path
 
 import polars as pl
 
-from pipeline import model as mdl, storage, telegram
+from pipeline import model as mdl, positions, storage, telegram
 
 DATA = Path("data")
 SIGNALS = DATA / "signals.parquet"
@@ -80,7 +80,32 @@ def run(quiet: bool = False, force_send: bool = False) -> None:
         return
 
     state = _load_state()
-    msg = telegram.format_signal(pred, state=state, is_test=force_send and not pred["signal"])
+    is_test_mode = force_send and not pred["signal"]
+
+    # Abre posição apenas em sinal REAL (não em teste forçado)
+    new_pos = None
+    if pred["signal"] and not is_test_mode:
+        if positions.has_open():
+            print("[predict] já existe posição aberta — não abre nova (evita duplicata)")
+        else:
+            atr_now = float(mat["atr_14"][-1]) if "atr_14" in mat.columns else None
+            if atr_now and atr_now > 0:
+                new_pos = positions.open_position(
+                    entry_time_ms=pred["open_time"],
+                    entry_price=pred["close"],
+                    atr=atr_now,
+                    proba_long=pred["proba_long"],
+                    atr_mult=mdl.ATR_MULT,
+                    horizon_hours=mdl.HORIZON_BARS * 4,  # bars 4h
+                )
+                print(
+                    f"[predict] 📌 Posição aberta: entry=${new_pos['entry_price']:,.0f}  "
+                    f"target=${new_pos['target_price']:,.0f}  stop=${new_pos['stop_price']:,.0f}"
+                )
+            else:
+                print("[predict] ⚠️ ATR inválido, não abriu posição")
+
+    msg = telegram.format_signal(pred, state=state, is_test=is_test_mode, position=new_pos)
     try:
         telegram.send(msg)
         print(f"[predict] ✅ Alerta enviado")

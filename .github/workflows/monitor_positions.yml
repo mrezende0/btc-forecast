@@ -1,0 +1,44 @@
+name: Monitor positions (15min)
+
+# Checa todas posições abertas a cada 15min. Fecha quando target/stop/timeout.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: monitor-positions
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Pull latest data
+        run: git pull --rebase origin main || true
+      - name: Run monitor
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m pipeline.monitor_positions
+      - name: Commit positions log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase --autostash origin main || true
+          git add data/positions.parquet 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "no position changes"
+          else
+            git commit -m "data(positions): $(date -u +%FT%TZ)"
+            git push
+          fi

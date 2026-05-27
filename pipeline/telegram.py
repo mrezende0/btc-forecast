@@ -41,8 +41,11 @@ def send(text: str, silent: bool = False) -> None:
         raise RuntimeError(f"Telegram falhou {r.status_code}: {r.text[:200]}")
 
 
-def format_signal(pred: dict, state: dict | None = None, is_test: bool = False) -> str:
-    """Formata alerta legível em Markdown."""
+def format_signal(pred: dict, state: dict | None = None, is_test: bool = False, position: dict | None = None) -> str:
+    """Formata alerta legível em Markdown.
+
+    Se `position` (dict do positions.open_position) vier, mostra target/stop reais.
+    """
     ts = datetime.fromtimestamp(pred["open_time"] / 1000, tz=timezone.utc)
     proba_pct = pred["proba_long"] * 100
     conf_pct = pred["confidence_pct"]
@@ -66,12 +69,24 @@ def format_signal(pred: dict, state: dict | None = None, is_test: bool = False) 
     if sub:
         lines.append(sub)
     lines.append("")
-    lines.extend([
-        "🎯 Estratégia (triple-barrier):",
-        "  • Target +1.1% (barreira superior)",
-        "  • Stop −1.1% (barreira inferior)",
-        "  • Timeout: 48h",
-    ])
+    if position:
+        tgt_pct = (position["target_price"] / position["entry_price"] - 1) * 100
+        stop_pct = (position["stop_price"] / position["entry_price"] - 1) * 100
+        lines.extend([
+            "🎯 Estratégia (triple-barrier, ATR-based):",
+            f"  • Target: *${position['target_price']:,.0f}*  ({tgt_pct:+.2f}%)",
+            f"  • Stop: *${position['stop_price']:,.0f}*  ({stop_pct:+.2f}%)",
+            f"  • Timeout: {position['horizon_hours']}h",
+            "",
+            "_Saída automática: sistema te avisa quando bater target, stop ou timeout._",
+        ])
+    else:
+        lines.extend([
+            "🎯 Estratégia (triple-barrier):",
+            "  • Target ~+1.1% (barreira superior, varia com ATR)",
+            "  • Stop ~−1.1% (barreira inferior, varia com ATR)",
+            "  • Timeout: 48h",
+        ])
 
     if state:
         lines.append("")
