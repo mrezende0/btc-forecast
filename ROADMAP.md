@@ -131,3 +131,45 @@ revisar — Sharpe 1.0 em chop é difícil; em bull é fácil. Métricas por reg
 
 Se após a Fase 6 o modelo não baterconsistentemente buy-and-hold líquido em pelo menos
 2 regimes distintos, projeto não tem edge. Arquivar e seguir vida.
+
+## 9. Diário de experimentos (cronológico, honesto)
+
+### Modelos
+- **v1 (15m bars, 34 features, single horizon)** — Sharpe -24.7 walk-forward. Catastrófico, ruído puro.
+- **v2 (4h bars, +interactions, +regime)** — Sharpe 0.88. Edge emergiu da granularidade maior.
+- **v2 dual-horizon AND (mid=12 + long=18)** ★ — Sharpe 1.29, +199% PnL. **Produção atual.**
+- **v3 (dual-horizon + sentiment GDELT/FinBERT)** — Sharpe 0.11. Sentiment QUEBROU edge. Não promovido.
+
+### Filtros / overlays testados
+- **EMA200 1D veto** — ❌ Sharpe -0.26 (base rate idêntica up/down em 48h horizon)
+- **Wick exhaustion (VSA)** — ❌ todas thresholds piores que baseline
+- **Asymmetric barriers RR 1:2** — ❌ Sharpe 0.52 (stop apertado bate demais em 4h BTC)
+- **Sem-BEAR filter (BTC -5% no mês → suprime)** ★ — ✅ Sharpe 0.69 vs 0.54 (FULL), retorno +40% vs +34%
+- **Hyperopt LGB (Optuna 30 trials)** — ❌ overfit validation (HOLDOUT pior)
+- **Meta-labeling (LdP 3.6)** — ❌ filtrou 84% sinais, killed edge
+- **Short model (espelho LONG)** — ❌ -282% (anti-drift estrutural)
+- **Time decay sample weights** — ❌ todas τ piores
+- **XGB + LGB ensemble** — ❌ XGB sozinho -0.38, ensembles diluíram
+
+### Position sizing testado (backtest realista com position blocking)
+- **FULL (100%)** — retorno +34%, MaxDD -16% (config histórica)
+- **FULL + sem-BEAR** ★ — retorno +40%, MaxDD -12% (**produção atual**)
+- **RISK-1PCT** — retorno +12%, MaxDD -5% (conservador, disponível)
+- **HALF/QUARTER/KELLY** — retornos baixos, sem ganho de Sharpe
+
+### Análise de regime (backtest inflado, mas relativos válidos)
+- CHOP: 30% tempo, **76% do PnL**, Sharpe 1.79
+- BULL: 45% tempo, 32% PnL, Sharpe 0.63 (entra em pullbacks que viram stop)
+- BEAR: 25% tempo, **-8.7% PnL**, Sharpe -0.25 ← justifica sem-BEAR
+
+### Comparação vs B&H 2023-2026
+- B&H 2023-2026 (BTC $17k → $77k): **+362%, Sharpe 1.28, MaxDD -50%**
+- Modelo FULL+sem-BEAR: **+40%, Sharpe 0.69, MaxDD -12%**
+- Verdade dura: bull market puro favoreceu B&H. Modelo perde absoluto, ganha em DD.
+
+### Lições meta
+- Filtros hard-coded (Velasques style) NÃO bateram ML — modelo já internaliza
+- Único experimento que funcionou: **diversificação via TARGET** (horizontes diferentes), não features
+- Sentiment de GDELT + FinBERT genérico não ajudou. Hipóteses: cross-source bias, FinBERT não-crypto, agregação diária dilui
+- Position blocking realista corta PnL ~3x vs walk-forward simples — sempre testar com engine de trades real
+
