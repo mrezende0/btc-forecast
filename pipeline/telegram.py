@@ -41,25 +41,37 @@ def send(text: str, silent: bool = False) -> None:
         raise RuntimeError(f"Telegram falhou {r.status_code}: {r.text[:200]}")
 
 
-def format_signal(pred: dict, state: dict | None = None) -> str:
+def format_signal(pred: dict, state: dict | None = None, is_test: bool = False) -> str:
     """Formata alerta legível em Markdown."""
     ts = datetime.fromtimestamp(pred["open_time"] / 1000, tz=timezone.utc)
     proba_pct = pred["proba_long"] * 100
     conf_pct = pred["confidence_pct"]
     price = pred["close"]
+    edge_sign = "+" if conf_pct >= 0 else ""  # negative já vem com "-"
+
+    if is_test:
+        header = "🧪 *TESTE — sem sinal real*"
+        sub = f"_proba {proba_pct:.1f}% está abaixo do threshold 35%, em produção isto NÃO teria sido enviado._"
+    else:
+        header = "🟢 *SINAL DE COMPRA — BTC*"
+        sub = None
 
     lines = [
-        "🟢 *SINAL DE COMPRA — BTC*",
+        header,
         "",
         f"📊 Vela: `{ts:%Y-%m-%d %H:%M} UTC` (4h)",
         f"💵 Preço: *${price:,.0f}*",
-        f"🎯 Confiança modelo: *{proba_pct:.1f}%*  (threshold 35%, edge +{conf_pct:.0f}%)",
-        "",
+        f"🎯 Confiança modelo: *{proba_pct:.1f}%*  (threshold 35%, edge {edge_sign}{conf_pct:.0f}%)",
+    ]
+    if sub:
+        lines.append(sub)
+    lines.append("")
+    lines.extend([
         "🎯 Estratégia (triple-barrier):",
         "  • Target +1.1% (barreira superior)",
         "  • Stop −1.1% (barreira inferior)",
         "  • Timeout: 48h",
-    ]
+    ])
 
     if state:
         lines.append("")

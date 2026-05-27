@@ -80,7 +80,7 @@ def run(quiet: bool = False, force_send: bool = False) -> None:
         return
 
     state = _load_state()
-    msg = telegram.format_signal(pred, state=state)
+    msg = telegram.format_signal(pred, state=state, is_test=force_send and not pred["signal"])
     try:
         telegram.send(msg)
         print(f"[predict] ✅ Alerta enviado")
