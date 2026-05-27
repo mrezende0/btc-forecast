@@ -314,6 +314,45 @@ Top 5 críticos:
 
 ---
 
+## E2 — Ensemble seeds (2026-05-27) — ⚠️ ACHADO CRÍTICO
+
+**Hipótese:** ensemble N=5 LightGBMs com seeds diferentes reduz variância e melhora Sharpe.
+
+**Setup:** Walk-forward expanding quarterly 2023Q1→2026Q2, MID-only, thr=0.35, no_bear=-0.05, COST=0.0015, FULL sizing, uniqueness weights.
+
+**Resultado (rodado 2x independentemente — agente E2 + bash manual, idênticos):**
+
+```
+config                       VAL Sh    HO Sh   trades   final $1k   HO MaxDD
+N=1 (seed=42 baseline)       -0.395   +0.451     158       $904       -12.4%
+N=3 (seeds[42,123,456])      -0.596   +0.591     150       $869        -9.7%
+N=5 (seeds base)             -0.664   +0.419     154       $818       -12.6%
+N=10 (seeds base+extra)      -0.544   +0.560     148       $872       -10.2%
+
+VARIÂNCIA entre 5 single-seed runs (seeds 42, 123, 456, 789, 999):
+  HO Sharpe  mean +0.586  std 0.477  range [-0.003, +1.127]
+  Final $1k  mean $862    std $116   range [$683, $977]
+```
+
+**🚨 BOMBA: "Sharpe 1.36" reportado como baseline ERA UM SEED SORTUDO.**
+
+Todas as métricas anteriores na sessão (Sharpe HOLDOUT 1.36 / 1.55, Final $1290 etc) vieram de
+runs single-seed em RNG state específico. A performance ESPERADA real é Sharpe ~0.59 ± 0.48.
+
+**Implicações:**
+1. Modelo **NÃO bate B&H** em risk-adjusted (0.59 < 1.28).
+2. Range [-0.003, +1.127] significa que 20% das rodadas podem dar Sharpe próximo de zero.
+3. PSR 0.952 reportado em A1-A foi calculado sobre o run sortudo — pode estar inflado.
+
+**Decisão:** ENSEMBLE_SEEDS = [42, 123, 456, 789, 999] promovido em produção.
+- predict_dual_horizon agora usa train_ensemble + predict_ensemble_proba
+- Custo: ~24s vs 3s single (5x). Aceitável em cron 4h.
+- Não melhora Sharpe ESPERADO, mas garante operação com média esperada e não com seed sortudo/azarado.
+
+**K incremental:** +1 (E2 — uma hipótese testada). Total K = 98.
+
+---
+
 ## Política dia-a-dia
 
 1. **Pré-registrar** experimento aqui ANTES de rodar.

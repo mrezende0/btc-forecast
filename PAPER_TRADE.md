@@ -52,16 +52,28 @@ Mostra:
 Workflow `paper_report.yml` envia resumo no Telegram todo **domingo 12:00 UTC**.
 Pode disparar manual em Actions → "Paper Trade Report" → Run workflow.
 
-## O que esperar (baseado no backtest)
+## O que esperar (calibrado APÓS achado E2 — verdade dura)
 
-Backtest HOLDOUT 2025+ rodou 159 trades em 17 meses:
-- **Frequência:** ~9 trades/mês
-- **Win rate:** 54.2%
-- **Avg PnL/trade:** +0.43% (após custo)
-- **Sharpe anualizado:** 1.55
-- **MaxDD:** -12% (com FULL sizing)
+⚠️ **Métricas anteriores estavam infladas por sorte de seed RNG.**
+Análise E2 (ensemble 5 seeds): performance real tem **variância enorme**:
+
+```
+Métrica          single-seed enganoso    REAL (E2 mean ± std)
+HO Sharpe        1.36 / 1.55             0.59 ± 0.48 (range -0.00 a +1.13)
+Final $1k        $1,290                  $862 ± $116 (range $683 a $977)
+Win rate         54.2%                   ~50-54% (similar entre seeds)
+```
+
+**Produção agora usa ensemble N=5** — converge pra MÉDIA esperada, não pro melhor seed.
 
 Em 30 dias de paper trade você deve ver ~5-15 trades. Em 90 dias, ~25-45.
+
+**Range realista de outcomes em 90 dias (com leverage 1x):**
+- Pior cenário (perc 10%): -10% capital ($900)
+- Mediana esperada: -5 a +5% capital
+- Melhor cenário (perc 90%): +15% capital
+
+**Bull market puro:** B&H continua melhor opção em retorno absoluto.
 
 ## Métricas de validação
 

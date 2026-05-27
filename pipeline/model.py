@@ -26,6 +26,7 @@ LEVERAGE_DEFAULT = 1.0     # multiplicador de posição. Stop a 2.5% × leverage
 LEVERAGE_MAX = 5.0         # cap de segurança. 5x stop=2.5% → -12.5% capital por trade ruim.
 LEVERAGE_DYNAMIC = True    # se True, predict_now usa dynamic_leverage(proba, vol). False = TRADING_LEVERAGE env.
 LEVERAGE_VOL_TARGET = 0.25 # target vol anualizada pro brake. 25% = média histórica BTC.
+ENSEMBLE_SEEDS = [42, 123, 456, 789, 999]  # E2 confirmou std HO Sharpe 0.48 entre seeds → ensemble estabiliza
 
 LGB_PARAMS = dict(
     objective="binary",
@@ -62,17 +63,38 @@ def build_training_matrix(horizon_bars: int = HORIZON_BARS) -> tuple[pl.DataFram
     return mat, feature_cols
 
 
-def train(mat: pl.DataFrame, feature_cols: list[str], horizon_bars: int = HORIZON_BARS) -> lgb.Booster:
+def train(mat: pl.DataFrame, feature_cols: list[str], horizon_bars: int = HORIZON_BARS,
+          seed: int | None = None) -> lgb.Booster:
     """Treina com purge: exclui últimas `horizon_bars` linhas do treino
     (cujos labels dependem de futuro que ainda não temos).
 
     Aplica `uniqueness_weight` (LdP) em `lgb.Dataset(weight=...)` se disponível.
+    Aceita seed pra ensembling (E2 mostrou std Sharpe 0.48 entre seeds).
     """
     use = mat.head(mat.height - horizon_bars)
     X = use.select(feature_cols).to_numpy()
     y = use["y"].to_numpy()
     weight = use["uniqueness_weight"].to_numpy() if "uniqueness_weight" in use.columns else None
-    return lgb.train(LGB_PARAMS, lgb.Dataset(X, y, weight=weight), num_boost_round=N_ROUNDS)
+    params = dict(LGB_PARAMS)
+    if seed is not None:
+        params["seed"] = seed
+        params["feature_fraction_seed"] = seed
+        params["bagging_seed"] = seed
+        params["data_random_seed"] = seed
+    return lgb.train(params, lgb.Dataset(X, y, weight=weight), num_boost_round=N_ROUNDS)
+
+
+def train_ensemble(mat: pl.DataFrame, feature_cols: list[str], horizon_bars: int = HORIZON_BARS,
+                   seeds: list[int] = None) -> list[lgb.Booster]:
+    """Treina N modelos com seeds diferentes. Predições agregam por média."""
+    seeds = seeds or ENSEMBLE_SEEDS
+    return [train(mat, feature_cols, horizon_bars=horizon_bars, seed=s) for s in seeds]
+
+
+def predict_ensemble_proba(models: list[lgb.Booster], X) -> float:
+    """Média das probas dos N modelos."""
+    probas = [float(m.predict(X)[0]) for m in models]
+    return sum(probas) / len(probas)
 
 
 def predict_latest(model: lgb.Booster, mat: pl.DataFrame, feature_cols: list[str]) -> dict:
@@ -103,21 +125,24 @@ def predict_dual_horizon() -> dict:
       OR  — mid OR long (alta cobertura, geralmente Sharpe pior)
     """
     mat_mid, fc_mid = build_training_matrix(horizon_bars=HORIZON_BARS)
-    m_mid = train(mat_mid, fc_mid, horizon_bars=HORIZON_BARS)
+    # Ensemble N=5 seeds (E2 mostrou std HO Sharpe 0.48 single-seed → ensemble estabiliza)
+    models_mid = train_ensemble(mat_mid, fc_mid, horizon_bars=HORIZON_BARS)
 
     last_mid = mat_mid.tail(1)
-    proba_mid = float(m_mid.predict(last_mid.select(fc_mid).to_numpy())[0])
+    X_mid = last_mid.select(fc_mid).to_numpy()
+    proba_mid = predict_ensemble_proba(models_mid, X_mid)
     ot = int(last_mid["open_time"][0])
 
     # Long-horizon: só treina/prediz se regra precisar (economiza ~30s no cron)
     proba_long_h = None
     if ENSEMBLE_RULE in ("AND", "OR"):
         mat_long, fc_long = build_training_matrix(horizon_bars=HORIZON_BARS_LONG)
-        m_long = train(mat_long, fc_long, horizon_bars=HORIZON_BARS_LONG)
+        models_long = train_ensemble(mat_long, fc_long, horizon_bars=HORIZON_BARS_LONG)
         long_row = mat_long.filter(pl.col("open_time") == ot)
         if long_row.is_empty():
             long_row = mat_long.tail(1)
-        proba_long_h = float(m_long.predict(long_row.select(fc_long).to_numpy())[0])
+        X_long = long_row.select(fc_long).to_numpy()
+        proba_long_h = predict_ensemble_proba(models_long, X_long)
 
     # Filtro de regime: suprime sinal se BTC caiu mais que NO_BEAR_THRESHOLD no último mês.
     bars_per_month = 180
