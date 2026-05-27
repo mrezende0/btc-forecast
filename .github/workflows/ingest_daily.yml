@@ -1,0 +1,38 @@
+name: Ingest daily
+
+on:
+  schedule:
+    # 06:00 UTC — depois dos publishes diários de macro e F&G
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ingest-daily
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m pipeline.ingest_daily
+        env:
+          COINDESK_API_KEY: ${{ secrets.COINDESK_API_KEY }}
+      - name: Commit data
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --staged --quiet; then
+            echo "nothing to commit"
+          else
+            git commit -m "data(daily): $(date -u +%FT%TZ)"
+            git push
+          fi

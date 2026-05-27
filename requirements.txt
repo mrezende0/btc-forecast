@@ -1,0 +1,4 @@
+polars>=0.20
+requests>=2.31
+pyarrow>=14
+yfinance>=0.2.40
