@@ -91,16 +91,18 @@ def format_signal(pred: dict, state: dict | None = None, is_test: bool = False, 
             f"  • Stop: *${position['stop_price']:,.0f}*  ({stop_pct:+.2f}%)",
             f"  • Timeout: {position['horizon_hours']}h",
         ])
-        # Sugestão de sizing risk-1pct
+        # Sugestão de sizing
         if "size_suggestion" in position:
             sz = position["size_suggestion"]
-            cap_note = " (cap 50%)" if sz["capped"] else ""
+            mode = sz.get("mode", "full")
+            cap_note = " (cap 50%)" if sz.get("capped") else ""
+            label = "FULL (100% do capital)" if mode == "full" else "1% risk on stop"
             lines.extend([
                 "",
-                f"💰 Sizing sugerido (1% risk on stop):",
+                f"💰 Sizing sugerido ({label}):",
                 f"  • Capital base: *${sz['capital']:,.0f}*",
                 f"  • Posição: *{sz['size_btc']:.5f} BTC* ≈ *${sz['size_usd']:,.0f}* ({sz['pct_of_capital']*100:.1f}% do capital){cap_note}",
-                f"  • Risco se stop: *${sz['risk_dollars']:,.2f}*",
+                f"  • Risco se stop: *${sz['risk_dollars']:,.2f}* ({sz['risk_dollars']/sz['capital']*100:.1f}% do capital)",
             ])
         lines.append("")
         lines.append("_Saída automática: sistema te avisa quando bater target, stop ou timeout._")

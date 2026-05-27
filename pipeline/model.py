@@ -17,7 +17,8 @@ HORIZON_BARS = 12          # mid horizon (48h)
 HORIZON_BARS_LONG = 18     # long horizon (72h) — segundo modelo do AND
 ATR_MULT = 3.0
 SIGNAL_THRESHOLD = 0.35
-RISK_PER_TRADE = 0.01      # 1% do capital arriscado no stop (validado em exp_position_sizing)
+SIZING_MODE = "full"       # "full" = 100% do capital, "risk1" = 1% risk on stop
+RISK_PER_TRADE = 0.01      # usado se SIZING_MODE="risk1" — sizing conservador
 NO_BEAR_THRESHOLD = -0.05  # se BTC caiu >5% no último mês → suprime sinal (validado em exp_regime_analysis)
 
 LGB_PARAMS = dict(
@@ -140,18 +141,38 @@ def position_size(
     capital: float,
     entry_price: float,
     stop_price: float,
+    mode: str | None = None,
     risk_pct: float = RISK_PER_TRADE,
     max_pct: float = 0.50,
 ) -> dict:
-    """Calcula tamanho de posição risk-based (1% do capital no stop).
+    """Calcula tamanho de posição.
 
-    Retorna {size_btc, size_usd, risk_dollars, pct_of_capital, capped}.
-    Cap em max_pct (default 50%) pra evitar que ATR baixo gere posição enorme.
+    Mode "full" (default em produção): 100% do capital.
+    Mode "risk1": 1% do capital arriscado no stop (mais conservador).
+
+    Retorna {size_btc, size_usd, risk_dollars, pct_of_capital, capped, mode}.
     """
+    mode = mode or SIZING_MODE
+    if mode == "full":
+        size_usd = capital
+        size_btc = capital / entry_price
+        # risco real = (entry - stop) / entry × size_usd
+        risk_dollars = (entry_price - stop_price) / entry_price * size_usd
+        return {
+            "size_btc": size_btc,
+            "size_usd": size_usd,
+            "risk_dollars": risk_dollars,
+            "pct_of_capital": 1.0,
+            "capped": False,
+            "mode": "full",
+        }
+
+    # mode == "risk1"
     risk_dollars = capital * risk_pct
     distance = entry_price - stop_price
     if distance <= 0:
-        return {"size_btc": 0, "size_usd": 0, "risk_dollars": risk_dollars, "pct_of_capital": 0, "capped": False}
+        return {"size_btc": 0, "size_usd": 0, "risk_dollars": risk_dollars,
+                "pct_of_capital": 0, "capped": False, "mode": "risk1"}
     size_btc = risk_dollars / distance
     size_usd = size_btc * entry_price
     pct = size_usd / capital
@@ -166,4 +187,5 @@ def position_size(
         "risk_dollars": risk_dollars,
         "pct_of_capital": pct,
         "capped": capped,
+        "mode": "risk1",
     }
