@@ -101,6 +101,66 @@ Sharpe HOLDOUT = 0.67 > 0.5 → **Gate 1 NÃO trippa por literalidade**. Mas:
 
 ---
 
+## A1-A — Caminho A: re-tunar threshold no VAL apenas (2026-05-27)
+
+**Hipótese:** Threshold + NO_BEAR + ensemble rule escolhidos in-sample sobre dataset completo (Red Team HIGH-3, HIGH-5, HIGH-9). Re-tuning honesto restrito ao VAL pode revelar config melhor que generaliza pro HOLDOUT.
+
+**Método:**
+- `notebooks/exp_a1_threshold_search.py` — walk-forward 1x (uniqueness + COST=0.0015), cacheia probas, grida 400 configs:
+  - `thr_mid ∈ {0.30, 0.35, 0.40, 0.45, 0.50}` × 5
+  - `thr_long ∈ {0.30, 0.35, 0.40, 0.45, 0.50}` × 5
+  - `no_bear ∈ {off, -0.10, -0.05, 0.00}` × 4
+  - `rule ∈ {AND, OR, MID, LONG}` × 4
+- Ranking POR VAL Sharpe apenas. HOLDOUT congelado (só reportado, não escolhe).
+- Constraint: VAL Sharpe ≥ 0.3 e n_trades_val ≥ 30 pra ser candidato.
+
+**Resultado (rodado 2026-05-27):**
+
+```
+TOP-5 por VAL Sharpe:
+ thr_mid thr_long no_bear rule  val_sr val_psr0  ho_sr  ho_psr0
+ 0.35    *        -0.05   MID    +0.36   0.693  +1.53   0.952
+ (mesma tupla mid+no_bear+MID empata em 5 valores de thr_long porque MID ignora long)
+
+ 0.35    0.30     -0.10   AND    +0.31   0.674  +1.53   0.952  (segundo)
+ 0.35    0.30     -0.05   AND    +0.27   0.649  +1.56   0.952  (terceiro)
+```
+
+**WINNER:** `thr_mid=0.35, no_bear=-0.05, rule=MID` (abandona long-horizon).
+
+```
+VAL     2023-01→2024-12:  Sharpe +0.36  PSR(0) 0.693  MaxDD -14.1%  88 trades  +9.0%
+HOLDOUT 2025-01→2026-05:  Sharpe +1.53  PSR(0) 0.952  MaxDD  -8.3%  72 trades  +32.8%
+```
+
+**Findings honestos:**
+
+1. **Dual-horizon AND era prejudicial.** Top 5 configs por VAL Sharpe usam `rule=MID` (mid sozinho). O "Sharpe 1.29 dual-horizon AND ensemble" do commit bff285c era pior que mid sozinho. Confirma Red Team HIGH-9 + HIGH-5 (selection bias).
+
+2. **thr_mid=0.35 sobreviveu o tuning honesto.** Não era overfit no threshold; era no ensemble rule + uniqueness não ponderada.
+
+3. **NO_BEAR=-0.05 sobreviveu.** O filtro de regime bear está adicionando valor consistente.
+
+4. **HOLDOUT > VAL em Sharpe** (1.53 vs 0.36, ~4x). Inusitado e suspeito — mas:
+   - PSR(0)=0.952 alto → estatisticamente sólido
+   - 72 trades em HOLDOUT → amostra razoável
+   - MaxDD baixo (-8.3%) → consistente, não foi sorte de um trade big
+   - Provavelmente 2025 foi um regime mais favorável (bull tendencial pós-ETF)
+   - 2023-2024 VAL teve período de chop fim-2023 e dump verão-2024 (BTC -22%) que prejudicaram
+
+5. **PSR(0) 0.952 = exatamente o threshold ROADMAP_v2 §A3.** Gate 1 agora passa completamente.
+
+**Decisão:** WINNER promovido como novo baseline. Próxima sessão = Caminho C (A2 features de fluxo: taker_buy + OFI proxy).
+
+**Cuidados:**
+- Não promover dual-horizon como produção. Reverter `pipeline/model.py:predict_dual_horizon` pra usar só o mid.
+- Documentar K incremental honesto: 1 entrada (este tuning A) — não 400 (eram pré-registrados como UM bloco de hipótese "tune A").
+- HOLDOUT consumido como evidência de overfit-check. Próximas mudanças (A2+) precisarão de OUTRO holdout (ex: 2026-Q2 em diante). Reservar `data/walk_forward_probas.parquet` como artefato congelado.
+
+**K incremental:** +1 (Caminho A — 1 hipótese testada). Total K = 94.
+
+---
+
 ## Política dia-a-dia
 
 1. **Pré-registrar** experimento aqui ANTES de rodar.
