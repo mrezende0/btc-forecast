@@ -10,7 +10,7 @@ import time
 import polars as pl
 import requests
 
-SPOT_KLINES = "https://api.binance.com/api/v3/klines"
+SPOT_KLINES = "https://data-api.binance.vision/api/v3/klines"
 FUNDING = "https://fapi.binance.com/fapi/v1/fundingRate"
 
 SYMBOL = "BTCUSDT"
@@ -86,6 +86,10 @@ def fetch_funding(start_ms: int, end_ms: int | None = None) -> pl.DataFrame:
             },
             timeout=20,
         )
+        if r.status_code == 451:
+            # fapi sem mirror público — runner geo-bloqueado. Skip funding.
+            print("[funding] WARN: 451 geo-block, pulando coleta")
+            return pl.DataFrame()
         r.raise_for_status()
         batch = r.json()
         if not batch:
