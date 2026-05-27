@@ -17,12 +17,18 @@ def _paths_for(symbol: str, legacy: bool = False) -> dict:
             "ohlcv": DATA / "ohlcv_15m.parquet",
             "funding": DATA / "funding.parquet",
             "perp": DATA / "perp_15m.parquet",
+            "oi": DATA / "oi_15m.parquet",
+            "long_short": DATA / "long_short_15m.parquet",
+            "taker_ratio": DATA / "taker_ratio_15m.parquet",
         }
     base = symbol.replace("USDT", "").lower()
     return {
         "ohlcv": DATA / f"{base}_ohlcv_15m.parquet",
         "funding": DATA / f"{base}_funding.parquet",
         "perp": DATA / f"{base}_perp_15m.parquet",
+        "oi": DATA / f"{base}_oi_15m.parquet",
+        "long_short": DATA / f"{base}_long_short_15m.parquet",
+        "taker_ratio": DATA / f"{base}_taker_ratio_15m.parquet",
     }
 
 

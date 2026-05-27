@@ -115,10 +115,13 @@ print(br.group_by("label").agg(pl.len()).sort("label"))
 
 # %%
 keep_features = [c for c in labeled.columns if c not in feat.LAG_SAFE_EXCLUDE and c not in {"label", "hit_bar", "barrier_ret", "upper_px", "lower_px"}]
+# Core features que SEMPRE existem (price/técnico). Sentiment/macro/funding podem ser NaN
+# em períodos antigos — LightGBM lida com NaN, dropar perderia 4 anos de OHLCV.
+core_features = [c for c in keep_features if c.startswith(("ret_", "rv_", "rsi_", "ma_", "dist_", "vol_z", "atr_", "bb_", "logret"))]
 final = labeled.select([
     "open_time", "close", "label", "hit_bar", "barrier_ret",
     *keep_features,
-]).drop_nulls(subset=keep_features + ["label"])
+]).drop_nulls(subset=core_features + ["label"])
 
 out_path = ROOT / "data" / "training_matrix.parquet"
 final.write_parquet(out_path)

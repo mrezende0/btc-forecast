@@ -21,7 +21,10 @@ jobs:
           python-version: '3.11'
           cache: pip
       - run: pip install -r requirements.txt
-      - run: python -m pipeline.ingest_15m
+      - name: Ingest BTC (OHLCV + funding + perp + deriv)
+        run: python -m pipeline.ingest_15m --asset BTC
+      - name: Ingest ETH (OHLCV + funding + perp + deriv)
+        run: python -m pipeline.ingest_15m --asset ETH
       - name: Commit data
         run: |
           git config user.name  "github-actions[bot]"
