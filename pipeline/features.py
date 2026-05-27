@@ -378,22 +378,77 @@ def add_regime(df: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def add_flow(df: pl.DataFrame, perp: pl.DataFrame | None = None, bpd: int = 6) -> pl.DataFrame:
+    """Features de microestrutura: taker_buy_ratio, OFI proxy, basis (spot vs perp).
+
+    REGRA: todas computadas a partir de vela JÁ FECHADA → seguro (apply_lag final
+    move 1 vela atrás).
+    """
+    out = df
+    if "taker_buy_volume" in df.columns and "volume" in df.columns:
+        out = out.with_columns(
+            pl.when(pl.col("volume") > 0)
+              .then(pl.col("taker_buy_volume") / pl.col("volume"))
+              .otherwise(0.5)
+              .alias("taker_buy_ratio"),
+        )
+        # OFI proxy: (taker_buy - taker_sell) / volume = 2*ratio - 1, em [-1, +1]
+        out = out.with_columns(
+            (2 * pl.col("taker_buy_ratio") - 1).alias("ofi_proxy"),
+            _rolling_zscore("taker_buy_ratio", bpd * 7, "taker_buy_ratio_z7d"),
+            _rolling_zscore("taker_buy_ratio", bpd * 30, "taker_buy_ratio_z30d"),
+        )
+
+    # Basis (spot vs perp): perp_close / spot_close - 1. Positivo = perp prêmio (longs aquecidos).
+    if perp is not None and not perp.is_empty():
+        perp_use = perp.select(["open_time", "perp_close"])
+        if "perp_taker_buy_volume" in perp.columns and "perp_volume" in perp.columns:
+            perp_use = perp.select(["open_time", "perp_close", "perp_taker_buy_volume", "perp_volume"])
+        out = out.sort("open_time").join(perp_use, on="open_time", how="left")
+        out = out.with_columns(
+            (pl.col("perp_close") / pl.col("close") - 1).alias("basis"),
+        )
+        out = out.with_columns(
+            _rolling_zscore("basis", bpd * 7, "basis_z7d"),
+            _rolling_zscore("basis", bpd * 30, "basis_z30d"),
+        )
+        if "perp_taker_buy_volume" in out.columns:
+            out = out.with_columns(
+                pl.when(pl.col("perp_volume") > 0)
+                  .then(pl.col("perp_taker_buy_volume") / pl.col("perp_volume"))
+                  .otherwise(0.5)
+                  .alias("perp_taker_buy_ratio"),
+            )
+            # diff de agressão: longs perp mais agressivos que spot?
+            if "taker_buy_ratio" in out.columns:
+                out = out.with_columns(
+                    (pl.col("perp_taker_buy_ratio") - pl.col("taker_buy_ratio")).alias("flow_div_perp_spot"),
+                )
+        # drop colunas intermediárias que não devem ser features
+        for c in ("perp_close", "perp_taker_buy_volume", "perp_volume"):
+            if c in out.columns:
+                out = out.drop(c)
+    return out
+
+
 def build_v2(
     ohlcv: pl.DataFrame,
     funding: pl.DataFrame,
     macro: pl.DataFrame,
     fg: pl.DataFrame,
     sentiment_daily: pl.DataFrame | None = None,
+    perp: pl.DataFrame | None = None,
     timeframe_min: int = 240,  # 4h default
     lag: int = 1,
 ) -> pl.DataFrame:
-    """Pipeline completa em timeframe arbitrário, com interactions + regime."""
+    """Pipeline completa em timeframe arbitrário, com interactions + regime + flow."""
     from pipeline import resample
 
     if timeframe_min != 15:
         ohlcv = resample.resample_ohlcv(ohlcv, minutes=timeframe_min)
+        if perp is not None and not perp.is_empty():
+            perp = resample.resample_perp(perp, minutes=timeframe_min)
 
-    # bars/hour fractional → round
     bph = max(1, round(60 / timeframe_min))
     bpd = round(60 * 24 / timeframe_min)
     bpw = bpd * 7
@@ -408,6 +463,7 @@ def build_v2(
     df = add_calendar(df)
     df = add_interactions(df)
     df = add_regime(df)
+    df = add_flow(df, perp=perp, bpd=bpd)
     df = apply_lag(df, lag=lag)
     return df
 
@@ -419,4 +475,6 @@ def build_v2_from_parquets(timeframe_min: int = 240, lag: int = 1) -> pl.DataFra
     fg = pl.read_parquet(DATA / "fg_daily.parquet")
     sd_path = DATA / "sentiment_daily.parquet"
     sd = pl.read_parquet(sd_path) if sd_path.exists() else pl.DataFrame()
-    return build_v2(ohlcv, funding, macro, fg, sd, timeframe_min=timeframe_min, lag=lag)
+    perp_path = DATA / "perp_15m.parquet"
+    perp = pl.read_parquet(perp_path) if perp_path.exists() else pl.DataFrame()
+    return build_v2(ohlcv, funding, macro, fg, sd, perp=perp, timeframe_min=timeframe_min, lag=lag)

@@ -10,6 +10,7 @@ from pipeline import binance, storage
 DATA = Path("data")
 OHLCV = DATA / "ohlcv_15m.parquet"
 FUND = DATA / "funding.parquet"
+PERP = DATA / "perp_15m.parquet"
 
 DEFAULT_START_MS = int(datetime(2021, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
 
@@ -28,6 +29,19 @@ def run(backfill: bool = False) -> None:
     start_f = DEFAULT_START_MS if (backfill or last_ft is None) else last_ft + 1
     f = binance.fetch_funding(start_f)
     print(f"[funding] +{storage.upsert(FUND, f, 'funding_time')} pontos")
+
+    # Perpetual klines pra basis (spot vs perp)
+    last_pt = storage.last_ts(PERP, "open_time")
+    start_p = (
+        DEFAULT_START_MS
+        if (backfill or last_pt is None)
+        else last_pt + binance.INTERVAL_MS
+    )
+    try:
+        p = binance.fetch_perp_klines(start_p)
+        print(f"[perp]    +{storage.upsert(PERP, p, 'open_time')} velas")
+    except Exception as e:
+        print(f"[perp]    ⚠️ falha: {e}")
 
 
 if __name__ == "__main__":
