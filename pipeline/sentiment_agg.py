@@ -22,11 +22,40 @@ NEWS = DATA / "news_raw.parquet"
 DAILY = DATA / "sentiment_daily.parquet"
 SCORED = DATA / "news_scored.parquet"  # cache de scores por artigo
 
+# Filtro de relevância — só artigos onde título menciona cripto.
+# Aplicado antes do FinBERT pra não diluir sinal com artigos off-topic.
+CRYPTO_TERMS = [
+    "bitcoin", "btc", "ethereum", "eth", "crypto", "blockchain",
+    "altcoin", "defi", "stablecoin", "binance", "coinbase",
+]
+CRYPTO_PATTERN = "|".join(CRYPTO_TERMS)
+
+# Domínios cripto-específicos sempre incluídos (mesmo sem keyword no título)
+CRYPTO_DOMAINS = {
+    "coindesk.com", "cointelegraph.com", "theblock.co", "decrypt.co",
+    "bitcoinmagazine.com", "cryptoslate.com", "beincrypto.com",
+    "cryptobriefing.com", "thedefiant.io", "newsbtc.com",
+    "insidebitcoins.com",
+}
+
+
+def _is_relevant_filter() -> pl.Expr:
+    """Bool expr: True se artigo é relevante (título cripto OU domain cripto)."""
+    return (
+        pl.col("title").str.to_lowercase().str.contains(CRYPTO_PATTERN)
+        | pl.col("domain").is_in(list(CRYPTO_DOMAINS))
+    )
+
 
 def _ensure_scores(recompute_all: bool = False) -> pl.DataFrame:
     news = storage.read(NEWS)
     if news.is_empty():
         return pl.DataFrame()
+
+    # Aplica filtro de relevância ANTES do FinBERT — economia + qualidade
+    before = news.height
+    news = news.filter(_is_relevant_filter())
+    print(f"[filter] {before} → {news.height} artigos relevantes ({100*news.height/max(before,1):.1f}%)")
 
     scored_existing = storage.read(SCORED) if not recompute_all else pl.DataFrame()
 

@@ -37,8 +37,8 @@ def _fetch_window(
     start: datetime,
     end: datetime,
     query: str = DEFAULT_QUERY,
-    retries: int = 5,
-    timeout: int = 60,
+    retries: int = 2,
+    timeout: int = 30,
 ) -> list[dict]:
     params = {
         "query": query,
@@ -65,7 +65,16 @@ def _fetch_window(
                 continue
             if "json" not in ctype:
                 return []
-            return r.json().get("articles", []) or []
+            # GDELT às vezes retorna JSON malformado (escapes inválidos em URLs)
+            try:
+                return r.json().get("articles", []) or []
+            except ValueError:
+                # tenta strict=False
+                import json
+                try:
+                    return json.loads(body, strict=False).get("articles", []) or []
+                except Exception:
+                    return []  # janela perdida, segue
         except Exception as e:
             last_err = e
             time.sleep(MIN_SLEEP * (attempt + 1))

@@ -1,0 +1,56 @@
+name: Backfill GDELT (chunked)
+
+# Workflow manual pra fazer backfill incremental de notícias em chunks de 60-90 dias.
+# Cada execução faz 1 chunk e commita. Pode rodar várias em paralelo (IPs diferentes
+# do GitHub Actions runner pool).
+#
+# Uso:
+#   Actions → Backfill GDELT → Run workflow → preencher start_date + end_date
+#   ex: start=2021-01-01 end=2021-03-31  (90 dias por execução)
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: 'Data de início (YYYY-MM-DD)'
+        required: true
+        default: '2021-01-01'
+      end_date:
+        description: 'Data de fim (YYYY-MM-DD)'
+        required: true
+        default: '2021-03-31'
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350  # quase 6h máx
+    concurrency:
+      group: backfill-gdelt-${{ github.event.inputs.start_date }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run backfill chunk
+        run: |
+          python -m pipeline.news_backfill \
+            --start "${{ github.event.inputs.start_date }}" \
+            --end   "${{ github.event.inputs.end_date }}"
+      - name: Pull rebase + commit
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main || true
+          git add data/news_raw.parquet
+          if git diff --staged --quiet; then
+            echo "nothing to commit"
+          else
+            git commit -m "data(news): chunk ${{ github.event.inputs.start_date }} → ${{ github.event.inputs.end_date }}"
+            git push
+          fi
