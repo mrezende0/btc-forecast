@@ -13,18 +13,24 @@ pra atender resultado, esse documento é o adversário.
 - Backtest honesto > modelo sofisticado. Bug em validação destrói qualquer ganho.
 - Uso pessoal. Não é produto. Não é fundo. Critério de morte explícito.
 
-## 2. Critério de sucesso (preencher antes de codar features)
+## 2. Critério de sucesso (sugerido — revisar quando tiver mais maturidade)
 
-> Walk-forward 2023–2025, líquido de custos (taker 0.05% + slippage 0.03%):
+Walk-forward 2023–2025, líquido de custos (taker 0.05% + slippage 0.03% = 0.08% round-trip):
 
-- [ ] Sharpe anualizado alvo:        `__________`
-- [ ] Max drawdown aceitável:        `__________`
-- [ ] Profit factor mínimo:          `__________`
-- [ ] Sinais por semana (janela):    `__________`
-- [ ] Bate buy-and-hold líquido?     `__________`
-- [ ] Critério de morte (kill):      `__________` (ex: "Sharpe rolling 90d < 0.3")
+| Métrica | Alvo | Mínimo | Benchmark B&H 2021-2026 |
+|---|---|---|---|
+| Sharpe anualizado | ≥ 1.0 | ≥ 0.7 | **0.60** |
+| Max drawdown | ≤ 30% | ≤ 40% | -77.2% |
+| Profit factor | ≥ 1.4 | ≥ 1.2 | 1.01 |
+| CAGR | ≥ 20% | ≥ 10% | +19.5% |
+| Sinais/semana | 2–4 | 1–6 | n/a |
+| Bate buy-hold líquido? | sim | sim | — |
+| Win rate (long) | ≥ 50% | ≥ 45% | 50.1% |
 
-Sem isso preenchido, **não codar nada além da ingestão**.
+**Critério de morte:** Sharpe rolling 90d < 0.3 por 4 semanas consecutivas em paper trading.
+
+Esses números saem do `02_baseline.py`. Quando tiver visão de regime (bull vs bear),
+revisar — Sharpe 1.0 em chop é difícil; em bull é fácil. Métricas por regime > médias.
 
 ## 3. Stack
 
