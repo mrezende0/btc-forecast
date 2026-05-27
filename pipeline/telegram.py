@@ -107,11 +107,22 @@ def format_signal(pred: dict, state: dict | None = None, is_test: bool = False, 
             if leverage >= 3.0:
                 lev_warn = "  ⚠️"
             risk_pct = sz.get("risk_pct_of_capital", sz["risk_dollars"]/sz["capital"]) * 100
+            # Detalha origem da leverage (dynamic/env/default)
+            lev_info = sz.get("leverage_info", {})
+            lev_source = lev_info.get("source", "default")
+            if lev_source == "dynamic":
+                f_conf = lev_info.get("f_conf", 0)
+                f_vol = lev_info.get("f_vol", 1)
+                lev_label = f"*{leverage:.1f}x* (dinâmica: conf {f_conf*100:.0f}% × vol-brake {f_vol:.2f}){lev_warn}"
+            elif lev_source == "env":
+                lev_label = f"*{leverage:.1f}x* (manual via TRADING_LEVERAGE){lev_warn}"
+            else:
+                lev_label = f"*{leverage:.1f}x*{lev_warn}"
             lines.extend([
                 "",
                 f"💰 Sizing sugerido ({label}):",
                 f"  • Capital base: *${sz['capital']:,.0f}*",
-                f"  • Alavancagem: *{leverage:.1f}x*{lev_warn}",
+                f"  • Alavancagem: {lev_label}",
                 f"  • Notional BTC: *{sz['size_btc']:.5f}* ≈ *${sz['notional_usd']:,.0f}*",
                 f"  • Margem usada: *${sz.get('margin_usd', sz['size_usd']):,.0f}* ({sz['pct_of_capital']*100:.1f}% capital){cap_note}",
                 f"  • Risco se stop: *${sz['risk_dollars']:,.2f}* (*{risk_pct:.1f}% do capital*)",

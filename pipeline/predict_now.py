@@ -94,16 +94,30 @@ def run(quiet: bool = False, force_send: bool = False) -> None:
                     atr_mult=mdl.ATR_MULT,
                     horizon_hours=mdl.HORIZON_BARS * 4,  # bars 4h
                 )
-                # Sugestão de sizing (capital + leverage configuráveis via env)
+                # Sugestão de sizing — leverage dinâmica por padrão, env override pra manual.
                 user_capital = float(os.environ.get("TELEGRAM_USER_CAPITAL", "1000"))
-                user_leverage = float(os.environ.get("TRADING_LEVERAGE", "1"))
+                rv_now = float(mat["rv_1d"][-1]) * (mdl.HORIZON_BARS * 365 / 12) ** 0.5 \
+                    if "rv_1d" in mat.columns else None
+                env_lev = os.environ.get("TRADING_LEVERAGE")
+                if env_lev is not None:
+                    lev_info = {"leverage": float(env_lev), "f_conf": None, "f_vol": None, "suppressed": False, "source": "env"}
+                elif mdl.LEVERAGE_DYNAMIC:
+                    lev_info = mdl.dynamic_leverage(
+                        proba_mid=pred["proba_mid"],
+                        rv_30d_ann=rv_now,
+                        in_bear=pred["in_bear"],
+                    )
+                    lev_info["source"] = "dynamic"
+                else:
+                    lev_info = {"leverage": mdl.LEVERAGE_DEFAULT, "source": "default"}
                 sz = mdl.position_size(
                     capital=user_capital,
                     entry_price=new_pos["entry_price"],
                     stop_price=new_pos["stop_price"],
-                    leverage=user_leverage,
+                    leverage=lev_info["leverage"],
                 )
                 sz["capital"] = user_capital
+                sz["leverage_info"] = lev_info
                 new_pos["size_suggestion"] = sz
 
                 print(
@@ -121,9 +135,24 @@ def run(quiet: bool = False, force_send: bool = False) -> None:
             stop = entry - mdl.ATR_MULT * atr_now
             target = entry + mdl.ATR_MULT * atr_now
             user_capital = float(os.environ.get("TELEGRAM_USER_CAPITAL", "1000"))
-            user_leverage = float(os.environ.get("TRADING_LEVERAGE", "1"))
-            sz = mdl.position_size(capital=user_capital, entry_price=entry, stop_price=stop, leverage=user_leverage)
+            rv_now = float(mat["rv_1d"][-1]) * (mdl.HORIZON_BARS * 365 / 12) ** 0.5 \
+                if "rv_1d" in mat.columns else None
+            env_lev = os.environ.get("TRADING_LEVERAGE")
+            if env_lev is not None:
+                lev_info = {"leverage": float(env_lev), "source": "env"}
+            elif mdl.LEVERAGE_DYNAMIC:
+                lev_info = mdl.dynamic_leverage(
+                    proba_mid=pred["proba_mid"],
+                    rv_30d_ann=rv_now,
+                    in_bear=pred["in_bear"],
+                )
+                lev_info["source"] = "dynamic"
+            else:
+                lev_info = {"leverage": mdl.LEVERAGE_DEFAULT, "source": "default"}
+            sz = mdl.position_size(capital=user_capital, entry_price=entry, stop_price=stop,
+                                   leverage=lev_info["leverage"])
             sz["capital"] = user_capital
+            sz["leverage_info"] = lev_info
             new_pos = {
                 "entry_price": entry,
                 "target_price": target,

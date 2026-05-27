@@ -24,6 +24,8 @@ ENSEMBLE_RULE = "MID"      # winner A1-A (Red Team M5 passou): MID sozinho > AND
                            # Valores: "MID" (prod) | "AND" (legado dual-horizon) | "OR"
 LEVERAGE_DEFAULT = 1.0     # multiplicador de posição. Stop a 2.5% × leverage = % capital perdido se stop.
 LEVERAGE_MAX = 5.0         # cap de segurança. 5x stop=2.5% → -12.5% capital por trade ruim.
+LEVERAGE_DYNAMIC = True    # se True, predict_now usa dynamic_leverage(proba, vol). False = TRADING_LEVERAGE env.
+LEVERAGE_VOL_TARGET = 0.25 # target vol anualizada pro brake. 25% = média histórica BTC.
 
 LGB_PARAMS = dict(
     objective="binary",
@@ -161,6 +163,47 @@ def predict_dual_horizon() -> dict:
         "confidence_pct": confidence_pct,
         "_mat_mid": mat_mid,
         "_features_mid": fc_mid,
+    }
+
+
+def dynamic_leverage(
+    proba_mid: float,
+    rv_30d_ann: float | None = None,
+    in_bear: bool = False,
+    threshold: float = SIGNAL_THRESHOLD,
+    vol_target: float = LEVERAGE_VOL_TARGET,
+    leverage_max: float = LEVERAGE_MAX,
+) -> dict:
+    """Calcula leverage ótima por trade a partir da confiança do modelo + regime de vol.
+
+    Fórmula:
+        f_conf  = (proba_mid - threshold) / (1 - threshold)   ∈ [0, 1]
+        base    = 1 + f_conf × (leverage_max - 1)             ∈ [1, leverage_max]
+        f_vol   = min(1, vol_target / rv_30d_ann)             vol > 25% → brake
+        leverage = clamp(base × f_vol, 1.0, leverage_max)
+
+    Se `in_bear` → leverage=0 (suprime trade; redundante com NO_BEAR mas explícito).
+
+    Retorna dict com leverage final + componentes pra debug/telegram.
+    """
+    if in_bear or proba_mid <= threshold:
+        return {"leverage": 0.0, "f_conf": 0.0, "f_vol": 0.0, "base": 0.0, "suppressed": True}
+
+    f_conf = max(0.0, min(1.0, (proba_mid - threshold) / (1 - threshold)))
+    base = 1.0 + f_conf * (leverage_max - 1.0)
+
+    if rv_30d_ann is None or rv_30d_ann <= 0:
+        f_vol = 1.0
+    else:
+        f_vol = min(1.0, vol_target / rv_30d_ann)
+
+    lev = max(1.0, min(leverage_max, base * f_vol))
+    return {
+        "leverage": float(lev),
+        "f_conf": float(f_conf),
+        "f_vol": float(f_vol),
+        "base": float(base),
+        "suppressed": False,
     }
 
 
