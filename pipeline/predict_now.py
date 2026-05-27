@@ -94,12 +94,14 @@ def run(quiet: bool = False, force_send: bool = False) -> None:
                     atr_mult=mdl.ATR_MULT,
                     horizon_hours=mdl.HORIZON_BARS * 4,  # bars 4h
                 )
-                # Sugestão de sizing risk-1pct (capital configurável via env)
+                # Sugestão de sizing (capital + leverage configuráveis via env)
                 user_capital = float(os.environ.get("TELEGRAM_USER_CAPITAL", "1000"))
+                user_leverage = float(os.environ.get("TRADING_LEVERAGE", "1"))
                 sz = mdl.position_size(
                     capital=user_capital,
                     entry_price=new_pos["entry_price"],
                     stop_price=new_pos["stop_price"],
+                    leverage=user_leverage,
                 )
                 sz["capital"] = user_capital
                 new_pos["size_suggestion"] = sz
@@ -119,7 +121,8 @@ def run(quiet: bool = False, force_send: bool = False) -> None:
             stop = entry - mdl.ATR_MULT * atr_now
             target = entry + mdl.ATR_MULT * atr_now
             user_capital = float(os.environ.get("TELEGRAM_USER_CAPITAL", "1000"))
-            sz = mdl.position_size(capital=user_capital, entry_price=entry, stop_price=stop)
+            user_leverage = float(os.environ.get("TRADING_LEVERAGE", "1"))
+            sz = mdl.position_size(capital=user_capital, entry_price=entry, stop_price=stop, leverage=user_leverage)
             sz["capital"] = user_capital
             new_pos = {
                 "entry_price": entry,

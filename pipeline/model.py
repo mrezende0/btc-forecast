@@ -22,6 +22,8 @@ RISK_PER_TRADE = 0.01      # usado se SIZING_MODE="risk1" — sizing conservador
 NO_BEAR_THRESHOLD = -0.05  # se BTC caiu >5% no último mês → suprime sinal (validado em exp_regime_analysis)
 ENSEMBLE_RULE = "MID"      # winner A1-A (Red Team M5 passou): MID sozinho > AND.
                            # Valores: "MID" (prod) | "AND" (legado dual-horizon) | "OR"
+LEVERAGE_DEFAULT = 1.0     # multiplicador de posição. Stop a 2.5% × leverage = % capital perdido se stop.
+LEVERAGE_MAX = 5.0         # cap de segurança. 5x stop=2.5% → -12.5% capital por trade ruim.
 
 LGB_PARAMS = dict(
     objective="binary",
@@ -169,48 +171,76 @@ def position_size(
     mode: str | None = None,
     risk_pct: float = RISK_PER_TRADE,
     max_pct: float = 0.50,
+    leverage: float = LEVERAGE_DEFAULT,
 ) -> dict:
-    """Calcula tamanho de posição.
+    """Calcula tamanho de posição com suporte a alavancagem.
 
-    Mode "full" (default em produção): 100% do capital.
+    Mode "full" (default em produção): 100% do capital como margem.
     Mode "risk1": 1% do capital arriscado no stop (mais conservador).
 
-    Retorna {size_btc, size_usd, risk_dollars, pct_of_capital, capped, mode}.
+    Leverage: multiplica notional = capital × leverage. Stop em %BTC = mesmo,
+    mas perda em % capital = leverage × stop%. Cap em LEVERAGE_MAX.
+
+    Retorna {size_btc, notional_usd, margin_usd, risk_dollars, risk_pct_of_capital,
+             leverage, leverage_capped, pct_of_capital, capped, mode}.
     """
     mode = mode or SIZING_MODE
+    # Cap leverage por segurança
+    leverage_capped = leverage > LEVERAGE_MAX
+    leverage = min(leverage, LEVERAGE_MAX)
+
+    stop_distance_pct = (entry_price - stop_price) / entry_price  # ex 0.025 = 2.5%
+
     if mode == "full":
-        size_usd = capital
-        size_btc = capital / entry_price
-        # risco real = (entry - stop) / entry × size_usd
-        risk_dollars = (entry_price - stop_price) / entry_price * size_usd
+        margin_usd = capital
+        notional_usd = capital * leverage
+        size_btc = notional_usd / entry_price
+        # Risco se stop: stop% × notional
+        risk_dollars = stop_distance_pct * notional_usd
+        risk_pct_capital = risk_dollars / capital  # = stop% × leverage
         return {
             "size_btc": size_btc,
-            "size_usd": size_usd,
+            "size_usd": notional_usd,        # legacy alias = notional
+            "notional_usd": notional_usd,
+            "margin_usd": margin_usd,
             "risk_dollars": risk_dollars,
+            "risk_pct_of_capital": risk_pct_capital,
             "pct_of_capital": 1.0,
             "capped": False,
+            "leverage": leverage,
+            "leverage_capped": leverage_capped,
             "mode": "full",
         }
 
     # mode == "risk1"
     risk_dollars = capital * risk_pct
-    distance = entry_price - stop_price
-    if distance <= 0:
-        return {"size_btc": 0, "size_usd": 0, "risk_dollars": risk_dollars,
-                "pct_of_capital": 0, "capped": False, "mode": "risk1"}
-    size_btc = risk_dollars / distance
-    size_usd = size_btc * entry_price
-    pct = size_usd / capital
+    if stop_distance_pct <= 0:
+        return {"size_btc": 0, "size_usd": 0, "notional_usd": 0, "margin_usd": 0,
+                "risk_dollars": risk_dollars, "risk_pct_of_capital": risk_pct,
+                "pct_of_capital": 0, "capped": False, "leverage": leverage,
+                "leverage_capped": leverage_capped, "mode": "risk1"}
+    # notional = risk / stop_pct (ignora leverage — risk1 já é tamanho-controlado)
+    notional_usd = risk_dollars / stop_distance_pct
+    margin_usd = notional_usd / leverage
+    size_btc = notional_usd / entry_price
+    pct = margin_usd / capital
     capped = pct > max_pct
     if capped:
-        size_usd = capital * max_pct
-        size_btc = size_usd / entry_price
+        margin_usd = capital * max_pct
+        notional_usd = margin_usd * leverage
+        size_btc = notional_usd / entry_price
+        risk_dollars = stop_distance_pct * notional_usd
         pct = max_pct
     return {
         "size_btc": size_btc,
-        "size_usd": size_usd,
+        "size_usd": notional_usd,
+        "notional_usd": notional_usd,
+        "margin_usd": margin_usd,
         "risk_dollars": risk_dollars,
+        "risk_pct_of_capital": risk_dollars / capital,
         "pct_of_capital": pct,
         "capped": capped,
+        "leverage": leverage,
+        "leverage_capped": leverage_capped,
         "mode": "risk1",
     }

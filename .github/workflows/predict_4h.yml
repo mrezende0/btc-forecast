@@ -37,6 +37,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TELEGRAM_USER_CAPITAL: ${{ vars.TELEGRAM_USER_CAPITAL || '1000' }}
+          TRADING_LEVERAGE: ${{ vars.TRADING_LEVERAGE || '1' }}
         run: |
           if [ "${{ github.event.inputs.force_send }}" = "true" ]; then
             python -m pipeline.predict_now --force-send

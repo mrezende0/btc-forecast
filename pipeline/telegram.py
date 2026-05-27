@@ -101,14 +101,25 @@ def format_signal(pred: dict, state: dict | None = None, is_test: bool = False, 
             sz = position["size_suggestion"]
             mode = sz.get("mode", "full")
             cap_note = " (cap 50%)" if sz.get("capped") else ""
-            label = "FULL (100% do capital)" if mode == "full" else "1% risk on stop"
+            label = "FULL (margem 100%)" if mode == "full" else "1% risk on stop"
+            leverage = sz.get("leverage", 1.0)
+            lev_warn = ""
+            if leverage >= 3.0:
+                lev_warn = "  ⚠️"
+            risk_pct = sz.get("risk_pct_of_capital", sz["risk_dollars"]/sz["capital"]) * 100
             lines.extend([
                 "",
                 f"💰 Sizing sugerido ({label}):",
                 f"  • Capital base: *${sz['capital']:,.0f}*",
-                f"  • Posição: *{sz['size_btc']:.5f} BTC* ≈ *${sz['size_usd']:,.0f}* ({sz['pct_of_capital']*100:.1f}% do capital){cap_note}",
-                f"  • Risco se stop: *${sz['risk_dollars']:,.2f}* ({sz['risk_dollars']/sz['capital']*100:.1f}% do capital)",
+                f"  • Alavancagem: *{leverage:.1f}x*{lev_warn}",
+                f"  • Notional BTC: *{sz['size_btc']:.5f}* ≈ *${sz['notional_usd']:,.0f}*",
+                f"  • Margem usada: *${sz.get('margin_usd', sz['size_usd']):,.0f}* ({sz['pct_of_capital']*100:.1f}% capital){cap_note}",
+                f"  • Risco se stop: *${sz['risk_dollars']:,.2f}* (*{risk_pct:.1f}% do capital*)",
             ])
+            if sz.get("leverage_capped"):
+                lines.append(f"  ⚠️ leverage capada em {leverage:.1f}x (máx {leverage:.0f}x por segurança)")
+            if leverage >= 3.0:
+                lines.append(f"  _⚠️ alta alavancagem: 1 stop = {risk_pct:.0f}% do capital. Errar 4-5 vezes seguidas quebra a conta._")
         lines.append("")
         lines.append("_Saída automática: sistema te avisa quando bater target, stop ou timeout._")
     else:
