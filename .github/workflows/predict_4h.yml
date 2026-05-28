@@ -44,15 +44,16 @@ jobs:
           else
             python -m pipeline.predict_now --quiet
           fi
-      - name: Commit signals log
+      - name: Commit signals + positions log
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git pull --rebase --autostash origin main || true
           git add data/signals.parquet
+          git add data/positions.parquet 2>/dev/null || true
           if git diff --staged --quiet; then
-            echo "no signal log changes"
+            echo "no signal/position changes"
           else
-            git commit -m "data(signal): $(date -u +%FT%TZ)"
+            git commit -m "data(signal+positions): $(date -u +%FT%TZ)"
             git push
           fi

@@ -54,9 +54,14 @@ def run(quiet: bool = False, force_send: bool = False) -> None:
     mat = pred["_mat_mid"]  # pra acessar ATR atual
 
     ts = datetime.fromtimestamp(pred["open_time"] / 1000, tz=timezone.utc)
+    long_str = (
+        f"{pred['proba_long_horizon']*100:.1f}%"
+        if pred["proba_long_horizon"] is not None
+        else "n/a"
+    )
     print(
         f"[predict]   bar={ts:%Y-%m-%d %H:%M}  close=${pred['close']:,.0f}  "
-        f"mid={pred['proba_mid']*100:.1f}%  long={pred['proba_long_horizon']*100:.1f}%  "
+        f"mid={pred['proba_mid']*100:.1f}%  long={long_str}  "
         f"signal={pred['signal']}  (mid={pred['signal_mid']}, long={pred['signal_long_h']})"
     )
 

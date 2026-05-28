@@ -246,6 +246,14 @@ LAG_SAFE_EXCLUDE = {
     "hour", "dow", "hour_sin", "hour_cos", "is_us_session", "is_weekend",
     # alvos OHLCV — não são features, apenas suporte
     "open", "high", "low", "close", "volume", "quote_volume", "trades",
+    # MAs absolutas: nível em USD, escalam com preço → drift severo em bull market.
+    # Usadas apenas como insumo intermediário pra dist_ma_* (scale-free) e is_uptrend_*.
+    "ma_7d", "ma_30d", "ma_90d",
+    # Demais features scale-dependent: substituídas por equivalentes normalizados.
+    # atr_14 → mantida no df (necessária pra stop/triple-barrier), só fora do modelo. Use rv_* como vol feature.
+    # taker_buy_volume(_quote) → use taker_buy_ratio (já scale-free).
+    # news_count → use news_count_z30 (rolling z-score já existe).
+    "atr_14", "taker_buy_volume", "taker_buy_quote_volume", "news_count",
 }
 
 
