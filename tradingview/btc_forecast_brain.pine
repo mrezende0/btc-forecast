@@ -1,0 +1,92 @@
+//@version=6
+// =============================================================================
+// BTC Forecast Brain — overlay companion to btc-forecast/reports/latest.md
+// =============================================================================
+// Reflete o "estado do cérebro" diretamente no chart:
+//   - Range 30d (high/low) do snapshot
+//   - Volatilidade realizada anualizada (30d) com regime
+//   - Funding z-score (input do dashboard_state.json)
+//   - Fear & Greed regime (input)
+//   - Marcador do último sinal do modelo (proba long + horário)
+//   - Background highlight em anomalia (funding |z| > 1.5)
+//   - Alert conditions prontas pra webhook → paper trade worker
+//
+// Uso:
+//   1. Cole no Pine Editor (chart BTC qualquer TF)
+//   2. Atualize os inputs com valores de data/dashboard_state.json
+//   3. Crie alert usando "Any alert() function call" pra disparar webhook
+// =============================================================================
+
+indicator("BTC Forecast Brain", overlay=true, max_lines_count=20, max_labels_count=50)
+
+// ---------- Inputs: snapshot do brain ---------------------------------------
+grp_snap = "Snapshot (dashboard_state.json)"
+high_30d   = input.float(82850.0, "Range 30d — High",    group=grp_snap)
+low_30d    = input.float(72728.85, "Range 30d — Low",    group=grp_snap)
+rv_30d_ann = input.float(0.31, "RV 30d anualizada",      group=grp_snap, step=0.01)
+fund_z     = input.float(1.89, "Funding z-score 30d",    group=grp_snap, step=0.1)
+fg_value   = input.int(22, "Fear & Greed (0-100)",       group=grp_snap, minval=0, maxval=100)
+
+grp_sig = "Último sinal (predict_4h)"
+last_proba = input.float(0.11, "Proba long",             group=grp_sig, step=0.01, minval=0, maxval=1)
+last_ts    = input.time(timestamp("2026-05-27 18:30 +0000"), "Timestamp do sinal", group=grp_sig)
+proba_gate = input.float(0.35, "Gate de entrada (proba)", group=grp_sig, step=0.01)
+
+grp_viz = "Visual"
+show_range  = input.bool(true,  "Mostrar range 30d",     group=grp_viz)
+show_anom   = input.bool(true,  "Highlight anomalia",    group=grp_viz)
+show_label  = input.bool(true,  "Label resumo",          group=grp_viz)
+
+// ---------- Range 30d -------------------------------------------------------
+var line hi_line = na
+var line lo_line = na
+if show_range and barstate.islast
+    line.delete(hi_line)
+    line.delete(lo_line)
+    hi_line := line.new(bar_index - 200, high_30d, bar_index + 20, high_30d, color=color.new(color.red, 30), width=1, style=line.style_dashed)
+    lo_line := line.new(bar_index - 200, low_30d,  bar_index + 20, low_30d,  color=color.new(color.green, 30), width=1, style=line.style_dashed)
+
+// ---------- RV nativa (close-to-close, anualizada) --------------------------
+// TF base: 15m. Bars/ano: ~35040. Ajusta dinamicamente.
+bars_per_year = (365.0 * 24.0 * 60.0) / timeframe.in_seconds(timeframe.period) * 60.0
+log_ret = math.log(close / close[1])
+rv_native = ta.stdev(log_ret, 96) * math.sqrt(bars_per_year)  // 96 bars ~ 1 dia em 15m
+
+// ---------- Anomaly highlight -----------------------------------------------
+is_anom = math.abs(fund_z) > 1.5
+bgcolor(show_anom and is_anom ? color.new(color.orange, 88) : na, title="Anomalia funding")
+
+// ---------- Marcador do último sinal ----------------------------------------
+is_signal_bar = time == last_ts or (time <= last_ts and time[1] > last_ts) ? false : (time[1] < last_ts and time >= last_ts)
+sig_color = last_proba >= proba_gate ? color.green : color.gray
+plotshape(is_signal_bar, title="Last signal", style=shape.labeldown, location=location.abovebar, color=sig_color, textcolor=color.white, text="sig", size=size.small)
+
+// ---------- Regime helpers --------------------------------------------------
+fg_regime = fg_value <= 25 ? "Extreme Fear" : fg_value <= 45 ? "Fear" : fg_value <= 55 ? "Neutral" : fg_value <= 75 ? "Greed" : "Extreme Greed"
+vol_regime = rv_30d_ann < 0.25 ? "LOW" : rv_30d_ann < 0.50 ? "MID" : "HIGH"
+
+// ---------- Label resumo ----------------------------------------------------
+var label info = na
+if show_label and barstate.islast
+    label.delete(info)
+    txt = "BTC Brain\n" +
+          "Proba: " + str.tostring(last_proba * 100, "#.#") + "% " + (last_proba >= proba_gate ? "🟢" : "⚪") + "\n" +
+          "Funding z: " + str.tostring(fund_z, "#.##") + (is_anom ? " ⚠️" : "") + "\n" +
+          "F&G: " + str.tostring(fg_value) + " (" + fg_regime + ")\n" +
+          "Vol 30d: " + str.tostring(rv_30d_ann * 100, "#.#") + "% (" + vol_regime + ")"
+    info := label.new(bar_index, high * 1.005, txt, style=label.style_label_left, color=color.new(color.black, 20), textcolor=color.white, size=size.normal)
+
+// ---------- Alerts → webhook paper trade ------------------------------------
+// Crie alert tipo "Any alert() function call" e cole o webhook do worker.
+// JSON enviado já no formato esperado pelo /tv-webhook.
+
+alertcondition(ta.crossover(close, high_30d), title="Break above range 30d", message='{"event":"break_high","price":"{{close}}","time":"{{time}}"}')
+alertcondition(ta.crossunder(close, low_30d), title="Break below range 30d", message='{"event":"break_low","price":"{{close}}","time":"{{time}}"}')
+alertcondition(is_anom and not is_anom[1], title="Funding anomaly entered", message='{"event":"funding_anom","time":"{{time}}"}')
+
+// alert() aceita string dinâmica — usa pra payload com proba/z atuais
+if barstate.isconfirmed and last_proba >= proba_gate and ta.change(time(timeframe.period)) != 0
+    alert('{"event":"proba_gate","proba":' + str.tostring(last_proba) + ',"z":' + str.tostring(fund_z) + ',"price":' + str.tostring(close) + '}', alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and is_anom and not is_anom[1]
+    alert('{"event":"funding_anom_dyn","z":' + str.tostring(fund_z) + ',"price":' + str.tostring(close) + '}', alert.freq_once_per_bar_close)

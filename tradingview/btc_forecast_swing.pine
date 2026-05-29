@@ -1,0 +1,141 @@
+//@version=6
+// =============================================================================
+// BTC Forecast Swing — high-conviction reversal signals
+// =============================================================================
+// Filosofia: poucos sinais, alta convicção. Captura extremos de regime onde
+// múltiplos fatores concordam que o lado oposto está esticado.
+//
+// BUY = mercado capitulado (cair mais é improvável estatisticamente):
+//   - preço toca/perfura low 30d
+//   - funding z-score < -1.5 (shorts esticados)
+//   - F&G <= 25 (Extreme Fear)
+//   - RSI daily < 30 (oversold no TF maior)
+//
+// SELL = mercado eufórico (subir mais é improvável):
+//   - preço toca/perfura high 30d
+//   - funding z-score > 1.5 (longs esticados)
+//   - F&G >= 75 (Extreme Greed)
+//   - RSI daily > 70 (overbought no TF maior)
+//
+// TF ideal: 4h ou 1D. Em TFs menores os sinais não se confirmam estatisticamente.
+//
+// Inputs manuais (funding z, F&G): atualiza do data/dashboard_state.json.
+// =============================================================================
+
+indicator("BTC Forecast Swing", overlay=true, max_lines_count=20, max_labels_count=100)
+
+// ---------- Inputs ----------------------------------------------------------
+grp_regime = "Regime (dashboard_state.json)"
+fund_z  = input.float(1.89, "Funding z-score 30d", group=grp_regime, step=0.1)
+fg_val  = input.int(22,    "Fear & Greed (0-100)", group=grp_regime, minval=0, maxval=100)
+
+grp_thresh = "Thresholds"
+fund_z_low  = input.float(-1.5, "Funding z BUY (≤)",  group=grp_thresh, step=0.1)
+fund_z_high = input.float( 1.5, "Funding z SELL (≥)", group=grp_thresh, step=0.1)
+fg_low      = input.int(25, "F&G BUY (≤)",  group=grp_thresh, minval=0, maxval=100)
+fg_high     = input.int(75, "F&G SELL (≥)", group=grp_thresh, minval=0, maxval=100)
+rsi_low     = input.int(30, "RSI BUY (≤)",  group=grp_thresh, minval=0, maxval=100)
+rsi_high    = input.int(70, "RSI SELL (≥)", group=grp_thresh, minval=0, maxval=100)
+range_lookback = input.int(120, "Range lookback (bars ~ 30d em 4h)", group=grp_thresh, minval=10)
+cooldown_bars  = input.int(20, "Cooldown entre sinais (bars)", group=grp_thresh, minval=1)
+
+grp_risk = "Risk management"
+rr_target = input.float(3.0, "Risk/Reward target", group=grp_risk, step=0.5, minval=1.0)
+stop_buf  = input.float(1.5, "Stop buffer (× ATR14)", group=grp_risk, step=0.1, minval=0.5)
+
+grp_viz = "Visual"
+show_range  = input.bool(true, "Linhas range 30d",  group=grp_viz)
+show_levels = input.bool(true, "Stop/target no sinal", group=grp_viz)
+show_label  = input.bool(true, "Painel resumo", group=grp_viz)
+
+// ---------- Computed --------------------------------------------------------
+hi_30 = ta.highest(high, range_lookback)
+lo_30 = ta.lowest(low,  range_lookback)
+
+rsi_d = request.security(syminfo.tickerid, "D", ta.rsi(close, 14), lookahead=barmerge.lookahead_off)
+rsi_native = ta.rsi(close, 14)
+
+atr14 = ta.atr(14)
+
+// Condições atômicas
+touched_low  = low  <= lo_30 * 1.005   // tolera 0.5% pra confirmar toque
+touched_high = high >= hi_30 * 0.995
+funding_short_stretched = fund_z <= fund_z_low
+funding_long_stretched  = fund_z >= fund_z_high
+fg_capitulation = fg_val <= fg_low
+fg_euphoria     = fg_val >= fg_high
+rsi_oversold    = rsi_d <= rsi_low
+rsi_overbought  = rsi_d >= rsi_high
+
+buy_raw  = touched_low  and funding_short_stretched and fg_capitulation and rsi_oversold
+sell_raw = touched_high and funding_long_stretched  and fg_euphoria     and rsi_overbought
+
+// Cooldown: bloqueia sinal repetido dentro de N bars
+var int last_sig_bar = na
+ready = na(last_sig_bar) or (bar_index - last_sig_bar) >= cooldown_bars
+
+buy_signal  = buy_raw  and ready
+sell_signal = sell_raw and ready
+
+if buy_signal or sell_signal
+    last_sig_bar := bar_index
+
+// ---------- Range lines -----------------------------------------------------
+var line hi_line = na
+var line lo_line = na
+if show_range and barstate.islast
+    line.delete(hi_line)
+    line.delete(lo_line)
+    hi_line := line.new(bar_index - range_lookback, hi_30, bar_index + 10, hi_30, color=color.new(color.red, 50), width=1, style=line.style_dashed)
+    lo_line := line.new(bar_index - range_lookback, lo_30, bar_index + 10, lo_30, color=color.new(color.green, 50), width=1, style=line.style_dashed)
+
+// ---------- Plot signals ----------------------------------------------------
+plotshape(buy_signal,  title="BUY",  style=shape.labelup,   location=location.belowbar, color=color.new(color.green, 0), textcolor=color.white, text="BUY",  size=size.normal)
+plotshape(sell_signal, title="SELL", style=shape.labeldown, location=location.abovebar, color=color.new(color.red,   0), textcolor=color.white, text="SELL", size=size.normal)
+
+// ---------- Stop/target no sinal --------------------------------------------
+buy_stop   = low  - atr14 * stop_buf
+buy_target = close + (close - buy_stop) * rr_target
+sell_stop   = high + atr14 * stop_buf
+sell_target = close - (sell_stop - close) * rr_target
+
+if show_levels and buy_signal
+    line.new(bar_index, buy_stop,   bar_index + 30, buy_stop,   color=color.new(color.red, 30),   width=1, style=line.style_dotted, extend=extend.none)
+    line.new(bar_index, buy_target, bar_index + 30, buy_target, color=color.new(color.green, 30), width=1, style=line.style_dotted, extend=extend.none)
+    label.new(bar_index + 30, buy_target, "T " + str.tostring(buy_target, "#"), style=label.style_label_left, color=color.new(color.green, 60), textcolor=color.white, size=size.small)
+    label.new(bar_index + 30, buy_stop,   "S " + str.tostring(buy_stop, "#"),   style=label.style_label_left, color=color.new(color.red, 60),   textcolor=color.white, size=size.small)
+
+if show_levels and sell_signal
+    line.new(bar_index, sell_stop,   bar_index + 30, sell_stop,   color=color.new(color.red, 30),   width=1, style=line.style_dotted, extend=extend.none)
+    line.new(bar_index, sell_target, bar_index + 30, sell_target, color=color.new(color.green, 30), width=1, style=line.style_dotted, extend=extend.none)
+    label.new(bar_index + 30, sell_target, "T " + str.tostring(sell_target, "#"), style=label.style_label_left, color=color.new(color.green, 60), textcolor=color.white, size=size.small)
+    label.new(bar_index + 30, sell_stop,   "S " + str.tostring(sell_stop, "#"),   style=label.style_label_left, color=color.new(color.red, 60),   textcolor=color.white, size=size.small)
+
+// ---------- Painel resumo: quais condições estão ativas ---------------------
+f_ok(bool b) => b ? "✅" : "❌"
+
+var table panel = table.new(position.top_right, 2, 6, border_width=1)
+if show_label and barstate.islast
+    table.cell(panel, 0, 0, "BTC Swing",  bgcolor=color.new(color.black, 20), text_color=color.white, text_size=size.normal)
+    table.cell(panel, 1, 0, "BUY | SELL", bgcolor=color.new(color.black, 20), text_color=color.white, text_size=size.normal)
+    table.cell(panel, 0, 1, "Range",    bgcolor=color.new(color.gray, 70), text_color=color.white)
+    table.cell(panel, 1, 1, f_ok(touched_low) + " | " + f_ok(touched_high), text_color=color.white)
+    table.cell(panel, 0, 2, "Funding",  bgcolor=color.new(color.gray, 70), text_color=color.white)
+    table.cell(panel, 1, 2, f_ok(funding_short_stretched) + " | " + f_ok(funding_long_stretched), text_color=color.white)
+    table.cell(panel, 0, 3, "F&G",      bgcolor=color.new(color.gray, 70), text_color=color.white)
+    table.cell(panel, 1, 3, f_ok(fg_capitulation) + " | " + f_ok(fg_euphoria), text_color=color.white)
+    table.cell(panel, 0, 4, "RSI 1D",   bgcolor=color.new(color.gray, 70), text_color=color.white)
+    table.cell(panel, 1, 4, f_ok(rsi_oversold) + " | " + f_ok(rsi_overbought), text_color=color.white)
+    table.cell(panel, 0, 5, "Score",    bgcolor=color.new(color.black, 20), text_color=color.white)
+    buy_score  = (touched_low ? 1 : 0) + (funding_short_stretched ? 1 : 0) + (fg_capitulation ? 1 : 0) + (rsi_oversold ? 1 : 0)
+    sell_score = (touched_high ? 1 : 0) + (funding_long_stretched ? 1 : 0) + (fg_euphoria ? 1 : 0) + (rsi_overbought ? 1 : 0)
+    table.cell(panel, 1, 5, str.tostring(buy_score) + "/4 | " + str.tostring(sell_score) + "/4", bgcolor=color.new(color.black, 20), text_color=color.white)
+
+// ---------- Alerts ----------------------------------------------------------
+alertcondition(buy_signal,  title="BTC Swing BUY",  message='{"event":"swing_buy","price":"{{close}}","time":"{{time}}"}')
+alertcondition(sell_signal, title="BTC Swing SELL", message='{"event":"swing_sell","price":"{{close}}","time":"{{time}}"}')
+
+if barstate.isconfirmed and buy_signal
+    alert('{"event":"swing_buy_dyn","price":' + str.tostring(close) + ',"stop":' + str.tostring(buy_stop) + ',"target":' + str.tostring(buy_target) + ',"z":' + str.tostring(fund_z) + ',"fg":' + str.tostring(fg_val) + '}', alert.freq_once_per_bar_close)
+if barstate.isconfirmed and sell_signal
+    alert('{"event":"swing_sell_dyn","price":' + str.tostring(close) + ',"stop":' + str.tostring(sell_stop) + ',"target":' + str.tostring(sell_target) + ',"z":' + str.tostring(fund_z) + ',"fg":' + str.tostring(fg_val) + '}', alert.freq_once_per_bar_close)
