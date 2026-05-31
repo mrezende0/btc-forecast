@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-05-30T08:12:32.203930+00:00",
+  "generated_at": "2026-05-31T08:31:38.417004+00:00",
   "price": {
     "available": true,
-    "last_close": 73495.91,
-    "last_dt": "2026-05-30T07:30:00+00:00",
-    "ret_24h": 0.001200417557864153,
-    "ret_7d": -0.02386277004645876,
-    "ret_30d": -0.03390549466265513,
-    "ret_90d": 0.09528365476109046,
+    "last_close": 73871.24,
+    "last_dt": "2026-05-31T07:45:00+00:00",
+    "ret_24h": 0.004386759231310933,
+    "ret_7d": -0.038134770590464884,
+    "ret_30d": -0.04225693220869431,
+    "ret_90d": 0.11913369870584445,
     "high_30d": 82850.0,
     "low_30d": 72512.49,
-    "n_bars": 307418
+    "n_bars": 307515
   },
   "vol": {
     "available": true,
-    "rv_1d_ann": 0.3728908440805257,
-    "rv_1w_ann": 0.3514379890950715,
-    "rv_30d_ann": 0.30990949102271564
+    "rv_1d_ann": 0.140645076698592,
+    "rv_1w_ann": 0.3256426164415019,
+    "rv_30d_ann": 0.3074713567927187
   },
   "funding": {
     "available": true,
@@ -48,11 +48,11 @@
   },
   "fg": {
     "available": true,
-    "last": 23,
-    "last_class": "Extreme Fear",
-    "last_date": "2026-05-30",
-    "chg_7d": -5,
-    "chg_30d": -6
+    "last": 28,
+    "last_class": "Fear",
+    "last_date": "2026-05-31",
+    "chg_7d": 3,
+    "chg_30d": 2
   },
   "sentiment_news": {
     "available": true,
@@ -68,10 +68,10 @@
     ]
   },
   "data_health": {
-    "ohlcv_15m_rows": 307418,
+    "ohlcv_15m_rows": 307515,
     "funding_rows": 7355,
     "macro_days": 2367,
-    "fg_days": 3037,
+    "fg_days": 3038,
     "news_days": 1504
   }
 }
