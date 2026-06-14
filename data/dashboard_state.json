@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-13T08:42:42.399267+00:00",
+  "generated_at": "2026-06-14T08:58:05.567633+00:00",
   "price": {
     "available": true,
     "last_close": 61022.01,
@@ -48,11 +48,11 @@
   },
   "fg": {
     "available": true,
-    "last": 13,
+    "last": 18,
     "last_class": "Extreme Fear",
-    "last_date": "2026-06-13",
-    "chg_7d": 1,
-    "chg_30d": -21
+    "last_date": "2026-06-14",
+    "chg_7d": 6,
+    "chg_30d": -25
   },
   "sentiment_news": {
     "available": true,
@@ -71,7 +71,7 @@
     "ohlcv_15m_rows": 308490,
     "funding_rows": 7355,
     "macro_days": 2377,
-    "fg_days": 3051,
+    "fg_days": 3052,
     "news_days": 1504
   }
 }
