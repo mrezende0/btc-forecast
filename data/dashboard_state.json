@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-15T11:38:27.161881+00:00",
+  "generated_at": "2026-06-16T10:48:10.588304+00:00",
   "price": {
     "available": true,
     "last_close": 61022.01,
@@ -29,30 +29,30 @@
   },
   "macro": {
     "available": true,
-    "last_date": "2026-06-12",
+    "last_date": "2026-06-15",
     "dxy": {
-      "last": 99.75,
-      "z_30d": 1.0498827038218381,
+      "last": 0.0,
+      "z_30d": -143.80348002305163,
       "chg_5d": -0.0031977585270320796
     },
     "vix": {
-      "last": 17.68000030517578,
-      "z_30d": -0.5268701753219787,
+      "last": 0.0,
+      "z_30d": -5.280624237233497,
       "chg_5d": -0.1780567123641147
     },
     "spx": {
-      "last": 7431.4599609375,
-      "z_30d": 0.8130825396825012,
+      "last": 0.0,
+      "z_30d": -19.890459969230374,
       "chg_5d": 0.0064628122127510235
     }
   },
   "fg": {
     "available": true,
-    "last": 20,
+    "last": 23,
     "last_class": "Extreme Fear",
-    "last_date": "2026-06-15",
-    "chg_7d": 12,
-    "chg_30d": -11
+    "last_date": "2026-06-16",
+    "chg_7d": 13,
+    "chg_30d": -4
   },
   "sentiment_news": {
     "available": true,
@@ -70,8 +70,8 @@
   "data_health": {
     "ohlcv_15m_rows": 308490,
     "funding_rows": 7355,
-    "macro_days": 2377,
-    "fg_days": 3053,
+    "macro_days": 2378,
+    "fg_days": 3054,
     "news_days": 1504
   }
 }
